@@ -17,7 +17,7 @@ pygame.init()
 # Screen dimensions
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Zombie Farm Defense")
+pygame.display.set_caption("Blood and Blooms")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -465,7 +465,7 @@ class Zombie(pygame.sprite.Sprite):
         super().__init__()
         self.original_image = pygame.image.load(image_path).convert_alpha()
         self.image = self.original_image  # Default image without rotation
-        self.rect = self.rect = self.image.get_rect(center=(x, y))
+        self.rect = self.image.get_rect(center=(x, y))
         
         # Adjust speed based on wave
         self.base_speed = 1.5  # Base zombie speed
@@ -612,10 +612,9 @@ class Farm:
 def show_start_menu():
     while True:
         screen.fill(BLACK)
-        title_text = font.render("Zombie Farm Defense", True, WHITE)
-        start_text = font.render("Press Enter to Start", True, WHITE)
-        screen.blit(title_text, (WIDTH // 2 - title_text.get_width() // 2, HEIGHT // 2 - 50))
-        screen.blit(start_text, (WIDTH // 2 - start_text.get_width() // 2, HEIGHT // 2 + 10))
+        menu = pygame.image.load("menu.jpg").convert_alpha()
+        screen.blit(menu, (0, 0))
+        
         pygame.display.flip()
 
         for event in pygame.event.get():
