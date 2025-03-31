@@ -17,7 +17,7 @@ pygame.init()
 # Screen dimensions
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Blood and Blooms")
+pygame.display.set_caption("Blood And Blooms")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -752,6 +752,13 @@ def main():
     
     # Add player back
     all_sprites.add(player)
+
+    # Reset weapon purchases except pistol
+    for weapon in weapons.values():
+        if weapon.name != "Pistol":
+            weapon.purchased = False
+    player.purchased_weapons = ["Pistol"]
+    player.equip_weapon("Pistol")
     
     # Start the first wave
     start_next_wave()
