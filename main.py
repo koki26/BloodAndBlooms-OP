@@ -30,20 +30,95 @@ YELLOW = (255, 200, 50)
 BLUE = (0, 0, 255)
 ORANGE = (255, 165, 0)
 PURPLE = (128, 0, 128)
+GRAY = (100, 100, 100)
 
 # Font
-font = pygame.font.Font(None, 36)
+font = pygame.font.Font("04B_30__.TTF", 26)
 
 # Game clock
 clock = pygame.time.Clock()
 FPS = 60
 
+# Player health system with 3 hearts and invincibility frames
+class PlayerHealth:
+    def __init__(self):
+        self.max_hearts = 3
+        self.hearts = 3
+        self.pixel_size = 6  
+        self.heart_width = 7 * self.pixel_size 
+        self.heart_height = 6 * self.pixel_size  
+        self.iframes_duration = 1000  # 1 second invincibility
+        self.last_hit_time = 0
+        self.is_invincible = False
+        self.blink_timer = 0
+        self.blink_speed = 150  # ms between blinks
 
-# Inicialization of values for player and zombie 
-player_health = 100
-zombie_wave = 1
-zombie_health = 50
-player_money = 0 
+        # Pixel design (0=transparent, 1=red fill, 2=black outline)
+        self.heart_pixels = [
+            [0,1,1,0,1,1,0],
+            [1,2,2,1,2,2,1],
+            [1,2,2,2,2,2,1],
+            [0,1,2,2,2,1,0],
+            [0,0,1,2,1,0,0],
+            [0,0,0,1,0,0,0]
+        ]
+
+        # Create heart images
+        self.heart_images = {
+            'full': self.create_heart_image((RED)), 
+            'empty': self.create_heart_image((GRAY))
+        }
+
+    def create_heart_image(self, fill_color):
+        img = pygame.Surface((self.heart_width, self.heart_height), pygame.SRCALPHA)
+        
+        # Draw fill pixels first (red or gray)
+        for y in range(6):
+            for x in range(7):
+                if self.heart_pixels[y][x]:  # Fill area
+                    pygame.draw.rect(img, fill_color, 
+                                   (x * self.pixel_size, 
+                                    y * self.pixel_size,
+                                    self.pixel_size, 
+                                    self.pixel_size))
+
+        
+        return img
+
+    def take_damage(self, amount):
+        current_time = pygame.time.get_ticks()
+        if not self.is_invincible or current_time - self.last_hit_time > self.iframes_duration:
+            self.hearts -= amount
+            self.last_hit_time = current_time
+            self.is_invincible = True
+            self.blink_timer = current_time
+            if self.hearts <= 0:
+                self.hearts = 0
+                return True
+        return False
+
+    def update(self):
+        current_time = pygame.time.get_ticks()
+        if self.is_invincible and current_time - self.last_hit_time > self.iframes_duration:
+            self.is_invincible = False
+
+    def draw(self, screen):
+        current_time = pygame.time.get_ticks()
+        blink_visible = (current_time - self.blink_timer) // self.blink_speed % 2 == 0
+
+        for i in range(self.max_hearts):
+            heart_pos = (10 + i * (self.heart_width + 4), 10)  # 4px spacing
+            
+            if self.is_invincible and not blink_visible:
+                continue
+                
+            if i < self.hearts:
+                screen.blit(self.heart_images['full'], heart_pos)
+            else:
+                screen.blit(self.heart_images['empty'], heart_pos)
+
+# Initialize player health
+player_health = PlayerHealth()
 
 
 # Weapon class
@@ -201,13 +276,13 @@ class Player(pygame.sprite.Sprite):
 
     def draw_ammo(self, screen):
         # Draw ammo counter
-        ammo_text = font.render(f"Ammo: {str(self.ammo) +"/"+ str(self.weapon.ammo)}", True, BLACK)
-        screen.blit(ammo_text, (WIDTH - 160, 10))
+        ammo_text = font.render(f"Ammo: {str(self.ammo) +"/"+ str(self.weapon.ammo)}", True, WHITE)
+        screen.blit(ammo_text, (WIDTH - 250, 10))
         
         # Draw reload indicator
         if self.is_reloading:
             reload_text = font.render("Reloading...", True, RED)
-            screen.blit(reload_text, (WIDTH - 160, 40))
+            screen.blit(reload_text, (WIDTH - 250, 40))
             
             # Draw reload progress bar
             progress_width = 100
@@ -216,9 +291,9 @@ class Player(pygame.sprite.Sprite):
             progress = min(elapsed / self.weapon.reload_time, 1.0)
             
             pygame.draw.rect(screen, LIGHT_GRAY, 
-                           (WIDTH - 140, 70, progress_width, 10))
+                           (WIDTH - 200, 70, progress_width, 10))
             pygame.draw.rect(screen, GREEN, 
-                           (WIDTH - 140, 70, int(progress_width * progress), 10))
+                           (WIDTH - 200, 70, int(progress_width * progress), 10))
 
     def update(self):
         keys = pygame.key.get_pressed()
@@ -354,18 +429,29 @@ class MuzzleFlash(pygame.sprite.Sprite):
                           random.randint(3, 5))
         
         # Add glowing spikes
-        spike_color = (255, 180, 50, self.alpha)
-        for i in range(num_spikes):
-            angle_deg = (360 / num_spikes) * i
-            rad = math.radians(angle_deg)
-            start_x = flash_size + math.cos(rad) * 5
-            start_y = flash_size + math.sin(rad) * 5
-            end_x = flash_size + math.cos(rad) * spike_length
-            end_y = flash_size + math.sin(rad) * spike_length
-            pygame.draw.line(self.image, spike_color,
-                            (start_x, start_y), (end_x, end_y),
-                            random.randint(2, 4))
+        unit_vectors = [
+            (1, 0),
+            (0.707, 0.707),
+            (0, 1),
+            (-0.707, 0.707),
+            (-1, 0),
+            (-0.707, -0.707),
+            (0, -1),
+            (0.707, -0.707),
+        ]
 
+        spike_color = (255, 180, 50, self.alpha)
+        for i in range(len(unit_vectors)):
+            dx, dy = unit_vectors[i]
+            start_x = flash_size + dx * 5
+            start_y = flash_size + dy * 5
+            end_x = flash_size + dx * spike_length
+            end_y = flash_size + dy * spike_length
+            pygame.draw.line(
+                self.image, spike_color,
+                (start_x, start_y), (end_x, end_y),
+                random.randint(2, 4)
+            )
         # Add subtle smoke particles
         for _ in range(random.randint(3, 5)):
             smoke_color = (50, 50, 50, random.randint(50, 100))
@@ -737,10 +823,11 @@ def start_next_wave():
 
 
 def main():
-    global player_health, zombie_wave, wave_ready, zombie_health, player_money
-    player_health = 100 # Edit for cheats and debug
-    zombie_wave = 0 # Edit for cheats and debug
-    player_money = 0 # Edit for cheats and debug
+    global zombie_wave, wave_ready, zombie_health, player_money
+    player_health.hearts = player_health.max_hearts
+    player_health.is_invincible = False
+    zombie_wave = 0
+    player_money = 0
     wave_ready = False
 
     # Clear all groups
@@ -765,7 +852,7 @@ def main():
 
     running = True
     while running:
-        screen.fill(LIGHT_GRAY)
+        screen.fill(BLACK)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -827,6 +914,9 @@ def main():
 
         handle_zombie_collisions()
 
+        # Update player health (for invincibility frames)
+        player_health.update()
+
         # Check bullet collisions with zombies
         for bullet in bullets:
             hit_zombies = pygame.sprite.spritecollide(bullet, zombies, False)
@@ -838,14 +928,12 @@ def main():
         
         # Check spit collisions with player
         for spit in pygame.sprite.spritecollide(player, spit_projectiles, True):
-            player_health -= 10
-            if player_health <= 0:
+            if player_health.take_damage(1):  # 1 heart of damage per spit
                 show_death_screen()
 
         # Check if player is hit by zombies
         if pygame.sprite.spritecollide(player, zombies, False):
-            player_health -= 1
-            if player_health <= 0:
+            if player_health.take_damage(1):  # 1 heart of damage per zombie hit
                 show_death_screen()
                 running = False
 
@@ -880,12 +968,11 @@ def main():
             pygame.draw.rect(screen, GREEN, (bar_x, bar_y, current_width, health_height))
 
         # Draw HUD
-        health_text = font.render(f"Player Health: {player_health}", True, BLACK)
-        wave_text = font.render(f"Wave: {zombie_wave}", True, BLACK)
-        money_text = font.render(f"Money: {player_money}", True, BLACK)
-        screen.blit(health_text, (10, 10))
-        screen.blit(wave_text, (10, 40))
-        screen.blit(money_text, (10, 70))
+        player_health.draw(screen)
+        wave_text = font.render(f"Wave: {zombie_wave}", True, WHITE)
+        money_text = font.render(f"Money: {player_money}", True, WHITE)
+        screen.blit(wave_text, (10, 10 + player_health.heart_height + 10))
+        screen.blit(money_text, (10, 10 + player_health.heart_height + 40))
         player.update_reload()
         player.draw_ammo(screen)
 
