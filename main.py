@@ -47,7 +47,7 @@ class PlayerHealth:
         self.pixel_size = 6  
         self.heart_width = 7 * self.pixel_size 
         self.heart_height = 6 * self.pixel_size  
-        self.iframes_duration = 1000  # 1 second invincibility
+        self.iframes_duration = 1500  
         self.last_hit_time = 0
         self.is_invincible = False
         self.blink_timer = 0
@@ -123,9 +123,10 @@ player_health = PlayerHealth()
 
 # Weapon class
 class Weapon:
-    def __init__(self, name, image_path, damage, fire_rate, ammo, reload_time, cost, spread=0, projectile_speed=15, is_automatic=False, max_range=500):
+    def __init__(self, name, damage, fire_rate, ammo, reload_time, cost, 
+                 spread=0, projectile_speed=15, is_automatic=False, max_range=500):
         self.name = name
-        self.image = pygame.image.load(image_path).convert_alpha()
+        self.combined_image = pygame.image.load(f"player_{name.lower()}.png").convert_alpha()
         self.damage = damage
         self.fire_rate = fire_rate
         self.ammo = ammo
@@ -135,14 +136,17 @@ class Weapon:
         self.spread = spread
         self.projectile_speed = projectile_speed
         self.is_automatic = is_automatic
-        self.max_range = max_range  
-
+        self.max_range = max_range
 
 weapons = {
-    "Pistol": Weapon("Pistol", "gun.png", 25, 200, 10, 2000, 0, max_range=500),
-    "Shotgun": Weapon("Shotgun", "shotgun.png", 100, 500, 6, 3000, 50, spread=30, max_range=200),  
-    "Rifle": Weapon("Rifle", "rifle.png", 35, 100, 20, 2500, 100, is_automatic=True, projectile_speed=15,  max_range=600),
-    "Sniper": Weapon("Sniper", "sniper.png", 1000, 200, 5, 4000, 200, projectile_speed=30, max_range=2000)  
+    "Pistol": Weapon("Pistol", 25, 200, 10, 2000, 0, 
+                    max_range=500),
+    "Shotgun": Weapon("Shotgun", 100, 500, 6, 3000, 50, 
+                    spread=30, max_range=200),  
+    "Rifle": Weapon("Rifle", 35, 100, 20, 2500, 100, 
+                    is_automatic=True, projectile_speed=15, max_range=600),
+    "Sniper": Weapon("Sniper", 1000, 200, 5, 4000, 200, 
+                    projectile_speed=30, max_range=2000)  
 }
 weapons["Pistol"].purchased = True  # Starting weapon is already purchased
 
@@ -235,22 +239,50 @@ def show_shop():
 class Player(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
-        self.image = pygame.Surface((50, 50), pygame.SRCALPHA)  # Transparent square for the player
-        pygame.draw.circle(self.image, GREEN, (25, 25), 25)  # Draw a green circle for the player
+        self.weapon = weapons["Pistol"]
+        self.image = self.weapon.combined_image  
+        self.original_image = self.image  
+        self.mask = pygame.mask.from_surface(self.image)
         self.weapon = weapons["Pistol"]
         self.purchased_weapons = ["Pistol"]
         self.rect = self.image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-        self.gun_offset = 20  # Distance of gun from center
         self.speed = 5
-        self.angle = 10
+        self.angle = 0  
         self.ammo = self.weapon.ammo
         self.is_reloading = False
         self.last_shot_time = 0
         self.reload_start_time = 0
         
+    def update(self):
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_w] and self.rect.top > 0:
+            self.rect.y -= self.speed
+        if keys[pygame.K_s] and self.rect.bottom < HEIGHT:
+            self.rect.y += self.speed
+        if keys[pygame.K_a] and self.rect.left > 0:
+            self.rect.x -= self.speed
+        if keys[pygame.K_d] and self.rect.right < WIDTH:
+            self.rect.x += self.speed
+
+        # Update angle based on mouse position
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        rel_x, rel_y = mouse_x - self.rect.centerx, mouse_y - self.rect.centery
+        self.angle = math.degrees(-math.atan2(rel_y, rel_x))
+        
+        # Rotate player image
+        self.image = pygame.transform.rotate(self.original_image, self.angle)
+        self.rect = self.image.get_rect(center=self.rect.center) 
+
+        # Automatic firing for rifles
+        if self.weapon.is_automatic and keys[pygame.K_SPACE]:
+            self.shoot()
+        
     def equip_weapon(self, weapon_name):
         if weapon_name in self.purchased_weapons:
             self.weapon = weapons[weapon_name]
+            self.original_image = self.weapon.combined_image
+            self.image = self.original_image
+            self.rect = self.image.get_rect(center=self.rect.center)
             self.ammo = self.weapon.ammo
             self.is_reloading = False
 
@@ -295,39 +327,8 @@ class Player(pygame.sprite.Sprite):
             pygame.draw.rect(screen, GREEN, 
                            (WIDTH - 200, 70, int(progress_width * progress), 10))
 
-    def update(self):
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_w] and self.rect.top > 0:
-            self.rect.y -= self.speed
-        if keys[pygame.K_s] and self.rect.bottom < HEIGHT:
-            self.rect.y += self.speed
-        if keys[pygame.K_a] and self.rect.left > 0:
-            self.rect.x -= self.speed
-        if keys[pygame.K_d] and self.rect.right < WIDTH:
-            self.rect.x += self.speed
-
-        # Update angle based on mouse position
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        rel_x, rel_y = mouse_x - self.rect.centerx, mouse_y - self.rect.centery
-        self.angle = math.degrees(-math.atan2(rel_y, rel_x))
-
-        # Automatic firing for rifles
-        if self.weapon.is_automatic and keys[pygame.K_SPACE]:
-            self.shoot()
-
     def draw(self, screen):
-        screen.blit(self.image, self.rect.topleft)  # Draw player
-
-        # Rotate gun properly and position it correctly
-        rotated_gun = pygame.transform.rotate(self.weapon.image, self.angle)
-        gun_rect = rotated_gun.get_rect(center=self.rect.center)  # Keep gun centered
-
-        # Adjust gun position to move with the player
-        gun_x = self.rect.centerx + self.gun_offset * math.cos(math.radians(self.angle))
-        gun_y = self.rect.centery - self.gun_offset * math.sin(math.radians(self.angle))
-
-        gun_rect.center = (gun_x, gun_y)
-        screen.blit(rotated_gun, gun_rect.topleft)  # Draw rotated gun
+        screen.blit(self.image, self.rect.topleft)
     
     def shoot(self):
         if self.can_shoot():
@@ -552,6 +553,7 @@ class Zombie(pygame.sprite.Sprite):
         self.original_image = pygame.image.load(image_path).convert_alpha()
         self.image = self.original_image  # Default image without rotation
         self.rect = self.image.get_rect(center=(x, y))
+        self.mask = pygame.mask.from_surface(self.image)
         
         # Adjust speed based on wave
         self.base_speed = 1.5  # Base zombie speed
@@ -581,6 +583,7 @@ class Zombie(pygame.sprite.Sprite):
 class TankZombie(Zombie): 
     def __init__(self, x, y, image_path):
         super().__init__(x, y, image_path)
+        self.mask = pygame.mask.from_surface(self.image)
         self.base_speed = 0.8
         self.max_health = 150 + (zombie_wave * 15)
         self.health = self.max_health
@@ -589,6 +592,7 @@ class TankZombie(Zombie):
 class RunnerZombie(Zombie):
     def __init__(self, x, y, image_path):
         super().__init__(x, y, image_path)
+        self.mask = pygame.mask.from_surface(self.image)
         self.base_speed = 3.20
         self.max_health = 30 + (zombie_wave * 5)
         self.health = self.max_health
@@ -597,6 +601,7 @@ class RunnerZombie(Zombie):
 class SpitterZombie(Zombie):
     def __init__(self, x, y, image_path):
         super().__init__(x, y, image_path)
+        self.mask = pygame.mask.from_surface(self.image)
         self.base_speed = 1.0
         self.max_health = 80 + (zombie_wave * 8)
         self.health = self.max_health
@@ -622,6 +627,7 @@ class SpitterZombie(Zombie):
         spit = SpitProjectile(self.rect.centerx, self.rect.centery, direction)
         all_sprites.add(spit)
         spit_projectiles.add(spit)
+        
 
 
 
@@ -826,8 +832,8 @@ def main():
     global zombie_wave, wave_ready, zombie_health, player_money
     player_health.hearts = player_health.max_hearts
     player_health.is_invincible = False
-    zombie_wave = 0
-    player_money = 0
+    zombie_wave = 0 # Edit for cheats and debug
+    player_money = 1000 # Edit for cheats and debug
     wave_ready = False
 
     # Clear all groups
@@ -931,11 +937,17 @@ def main():
             if player_health.take_damage(1):  # 1 heart of damage per spit
                 show_death_screen()
 
-        # Check if player is hit by zombies
-        if pygame.sprite.spritecollide(player, zombies, False):
-            if player_health.take_damage(1):  # 1 heart of damage per zombie hit
-                show_death_screen()
-                running = False
+        # Check if player is hit by zombies (pixel-perfect collision)
+        for zombie in zombies:
+            # First check bounding box collision (fast check)
+            if pygame.sprite.collide_rect(player, zombie):
+                # Then check pixel-perfect collision
+                offset_x = zombie.rect.left - player.rect.left
+                offset_y = zombie.rect.top - player.rect.top
+                if player.mask.overlap(zombie.mask, (offset_x, offset_y)):
+                    if player_health.take_damage(1):  # 1 heart of damage per zombie hit
+                        show_death_screen()
+                        running = False
 
         # In the wave progression section (after zombie kill check)
         if len(zombies) == 0 and not wave_ready:
