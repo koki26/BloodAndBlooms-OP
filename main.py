@@ -39,6 +39,13 @@ font = pygame.font.Font("04B_30__.TTF", 26)
 clock = pygame.time.Clock()
 FPS = 60
 
+# Wave timeout variables
+WAVE_TIMEOUT = 60000
+WAVE_WARNING_DURATION = 10000 
+shop_open_time = 0
+time_spent_in_shop = 0
+is_shop_open = False 
+
 # Player health system with 3 hearts and invincibility frames
 class PlayerHealth:
     def __init__(self):
@@ -81,8 +88,6 @@ class PlayerHealth:
                                     y * self.pixel_size,
                                     self.pixel_size, 
                                     self.pixel_size))
-
-        
         return img
 
     def take_damage(self, amount):
@@ -127,6 +132,7 @@ class Weapon:
                  spread=0, projectile_speed=15, is_automatic=False, max_range=500):
         self.name = name
         self.combined_image = pygame.image.load(f"player_{name.lower()}.png").convert_alpha()
+        
         self.damage = damage
         self.fire_rate = fire_rate
         self.ammo = ammo
@@ -153,6 +159,11 @@ weapons["Pistol"].purchased = True  # Starting weapon is already purchased
 
 # Shop function
 def show_shop():
+    global shop_open_time, time_spent_in_shop, is_shop_open
+
+    is_shop_open = True
+    shop_open_time = pygame.time.get_ticks()  # Record when shop opens
+    
     shop_running = True
     popup_message = None
     popup_start_time = 0
@@ -226,6 +237,8 @@ def show_shop():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     shop_running = False
+                    is_shop_open = False
+                    time_spent_in_shop += pygame.time.get_ticks() - shop_open_time
                 
                 # Handle weapon selection
                 if event.key == pygame.K_1:
@@ -245,7 +258,13 @@ class Player(pygame.sprite.Sprite):
         self.mask = pygame.mask.from_surface(self.image)
         self.weapon = weapons["Pistol"]
         self.purchased_weapons = ["Pistol"]
+        
+        # Create a rect centered on screen
         self.rect = self.image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        
+        self.pivot_offset = pygame.math.Vector2(10, 0)  
+        self.true_position = pygame.math.Vector2(self.rect.center)
+        
         self.speed = 5
         self.angle = 0  
         self.ammo = self.weapon.ammo
@@ -256,22 +275,27 @@ class Player(pygame.sprite.Sprite):
     def update(self):
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w] and self.rect.top > 0:
-            self.rect.y -= self.speed
+            self.true_position.y -= self.speed
         if keys[pygame.K_s] and self.rect.bottom < HEIGHT:
-            self.rect.y += self.speed
+            self.true_position.y += self.speed
         if keys[pygame.K_a] and self.rect.left > 0:
-            self.rect.x -= self.speed
+            self.true_position.x -= self.speed
         if keys[pygame.K_d] and self.rect.right < WIDTH:
-            self.rect.x += self.speed
+            self.true_position.x += self.speed
 
         # Update angle based on mouse position
         mouse_x, mouse_y = pygame.mouse.get_pos()
-        rel_x, rel_y = mouse_x - self.rect.centerx, mouse_y - self.rect.centery
+        rel_x, rel_y = mouse_x - self.true_position.x, mouse_y - self.true_position.y
         self.angle = math.degrees(-math.atan2(rel_y, rel_x))
         
-        # Rotate player image
+        # Rotate the image
         self.image = pygame.transform.rotate(self.original_image, self.angle)
-        self.rect = self.image.get_rect(center=self.rect.center) 
+        
+        # Calculate the offset after rotation
+        offset_rotated = self.pivot_offset.rotate(-self.angle)
+        
+        # Update the rect position
+        self.rect = self.image.get_rect(center=self.true_position + offset_rotated)
 
         # Automatic firing for rifles
         if self.weapon.is_automatic and keys[pygame.K_SPACE]:
@@ -337,8 +361,7 @@ class Player(pygame.sprite.Sprite):
                 -math.sin(math.radians(self.angle))
             ).normalize()
 
-            # Create muzzle flash
-            gun_length = 40
+            gun_length = 30  
             muzzle_x = self.rect.centerx + gun_length * direction.x
             muzzle_y = self.rect.centery + gun_length * direction.y
             muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, self.angle)
@@ -561,6 +584,7 @@ class Zombie(pygame.sprite.Sprite):
         self.max_health = zombie_health
         self.health = zombie_health
         self.target_offset = pygame.math.Vector2(random.uniform(-30, 30), random.uniform(-30, 30))  # Spread out movement
+        self.collision_radius = 20  # Smaller collision radius for smaller player model
 
     def update(self):
         # Find direction toward the player
@@ -568,7 +592,9 @@ class Zombie(pygame.sprite.Sprite):
         zombie_pos = pygame.math.Vector2(self.rect.center)
         
         # Calculate movement direction
-        direction = (target_pos - zombie_pos).normalize() if target_pos != zombie_pos else pygame.math.Vector2(0, 0)
+        direction = (target_pos - zombie_pos)
+        if direction.length() > 0:  # Only normalize if not zero vector
+            direction = direction.normalize()
         
         # Move zombie
         self.rect.x += direction.x * self.speed
@@ -580,7 +606,18 @@ class Zombie(pygame.sprite.Sprite):
         self.image = pygame.transform.rotate(self.original_image, angle)
         self.rect = self.image.get_rect(center=self.rect.center)
 
-class TankZombie(Zombie): 
+        # Adjust collision detection for smaller player model
+        if pygame.sprite.collide_circle(self, player):
+            offset_x = player.rect.left - self.rect.left
+            offset_y = player.rect.top - self.rect.top
+            if player.mask.overlap(self.mask, (offset_x, offset_y)):
+                if player_health.take_damage(1):  # 1 heart of damage per zombie hit
+                    show_death_screen()
+    @property
+    def radius(self):
+        return self.collision_radius
+
+class TankZombie(Zombie):
     def __init__(self, x, y, image_path):
         super().__init__(x, y, image_path)
         self.mask = pygame.mask.from_surface(self.image)
@@ -588,6 +625,7 @@ class TankZombie(Zombie):
         self.max_health = 150 + (zombie_wave * 15)
         self.health = self.max_health
         self.speed = self.base_speed + (zombie_wave * 0.05)
+        self.collision_radius = 25 
 
 class RunnerZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -597,6 +635,7 @@ class RunnerZombie(Zombie):
         self.max_health = 30 + (zombie_wave * 5)
         self.health = self.max_health
         self.speed = self.base_speed + (zombie_wave * 0.15)
+        self.collision_radius = 15 
 
 class SpitterZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -608,6 +647,7 @@ class SpitterZombie(Zombie):
         self.speed = self.base_speed + (zombie_wave * 0.1)
         self.attack_cooldown = 2000
         self.last_attack = 0
+        self.collision_radius = 20
 
     def update(self):
         super().update()
@@ -721,7 +761,7 @@ def show_start_menu():
 def show_death_screen():
     while True:
         screen.fill(BLACK)
-        game_over_text = font.render("Game Over", True, WHITE)
+        game_over_text = font.render("Game Over", True, RED)
         restart_text = font.render("Press R to Restart or Q to Quit", True, WHITE)
         screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 50))
         screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 10))
@@ -733,7 +773,9 @@ def show_death_screen():
                 exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_r:
-                    main()  # Restart the game
+                    initialize_game()  
+                    main()
+                    return
                 if event.key == pygame.K_q:
                     pygame.quit()
                     exit()
@@ -780,7 +822,6 @@ zombies = pygame.sprite.Group()
 
 farm = Farm()
 
-
 # Define a new event for wave progression
 NEXT_WAVE_EVENT = pygame.USEREVENT + 2
 
@@ -821,40 +862,95 @@ def spawn_zombie():
         zombies.add(zombie)
 
 def start_next_wave():
-    global wave_ready
+    global zombie_wave, wave_ready, wave_start_time, showing_wave_warning, time_spent_in_shop
+    
     wave_ready = False
+    wave_start_time = pygame.time.get_ticks()
+    showing_wave_warning = False
+    time_spent_in_shop = 0  
     spawn_zombie()
 
-
-
-
-def main():
-    global zombie_wave, wave_ready, zombie_health, player_money
-    player_health.hearts = player_health.max_hearts
-    player_health.is_invincible = False
-    zombie_wave = 0 # Edit for cheats and debug
-    player_money = 1000 # Edit for cheats and debug
-    wave_ready = False
-
-    # Clear all groups
-    all_sprites.empty()
-    zombies.empty()
-    bullets.empty()
-    spit_projectiles.empty()
-    zombie_health = 100
+def initialize_game():
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, wave_start_time, showing_wave_warning, warning_start_time
     
-    # Add player back
-    all_sprites.add(player)
+    # Reset game state variables
+    zombie_wave = 0 # Edit for cheats and debug
+    player_money = 0 # Edit for cheats and debug
+    wave_ready = False
+    zombie_health = 100 # Edit for cheats and debug
 
-    # Reset weapon purchases except pistol
+    # Wave timeout variables
+    wave_start_time = 0
+    showing_wave_warning = False
+    warning_start_time = 0
+    
+    # Clear all sprite groups
+    all_sprites = pygame.sprite.Group()
+    zombies = pygame.sprite.Group()
+    bullets = pygame.sprite.Group()
+    spit_projectiles = pygame.sprite.Group()
+    
+    # Reset player
+    player = Player()
+    player_health = PlayerHealth()
+    all_sprites.add(player)
+    
+    # Reset farm
+    farm = Farm()
+    
+    # Reset weapon purchases (only keep Pistol)
     for weapon in weapons.values():
         if weapon.name != "Pistol":
             weapon.purchased = False
     player.purchased_weapons = ["Pistol"]
     player.equip_weapon("Pistol")
     
-    # Start the first wave
+    # Start first wave
     start_next_wave()
+
+def check_wave_timeout():
+    global showing_wave_warning, warning_start_time, wave_ready, wave_start_time, zombie_wave, zombie_health, time_spent_in_shop
+    
+    current_time = pygame.time.get_ticks()
+    
+    # Subtract time spent in the shop from the wave timer
+    adjusted_wave_start = wave_start_time + time_spent_in_shop
+    time_in_wave = current_time - adjusted_wave_start
+    
+    # If player has been in wave for 1 minute and hasn't seen warning yet
+    if time_in_wave > WAVE_TIMEOUT and not showing_wave_warning and len(zombies) > 0:
+        showing_wave_warning = True
+        warning_start_time = current_time
+    
+    # If warning is active and 10 seconds have passed
+    if showing_wave_warning and current_time - warning_start_time > WAVE_WARNING_DURATION:
+        if player_health.take_damage(1):  
+            show_death_screen()
+            return
+        zombie_wave += 1
+        zombie_health += 10
+        start_next_wave()
+    
+    # Cancel warning if all zombies are killed before timeout
+    if showing_wave_warning and len(zombies) == 0:
+        showing_wave_warning = False
+
+def draw_wave_warning(screen):
+    global showing_wave_warning, warning_start_time
+    
+    if showing_wave_warning:
+        current_time = pygame.time.get_ticks()
+        time_left = max(0, WAVE_WARNING_DURATION - (current_time - warning_start_time))
+        seconds_left = math.ceil(time_left / 1000)
+        
+        # Draw warning at top center of screen
+        warning_text = font.render(f"Next wave forced in: {seconds_left}", True, RED)
+        screen.blit(warning_text, (WIDTH // 2 - warning_text.get_width() // 2, 10))
+
+def main():
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm
+
+    initialize_game() 
 
     running = True
     while running:
@@ -979,6 +1075,13 @@ def main():
             current_width = (zombie.health / zombie.max_health) * health_width
             pygame.draw.rect(screen, GREEN, (bar_x, bar_y, current_width, health_height))
 
+        # Check if wave timeout should happen
+        check_wave_timeout()
+
+        # Draw wave warning if active
+        if showing_wave_warning:
+            draw_wave_warning(screen)
+
         # Draw HUD
         player_health.draw(screen)
         wave_text = font.render(f"Wave: {zombie_wave}", True, WHITE)
@@ -987,6 +1090,7 @@ def main():
         screen.blit(money_text, (10, 10 + player_health.heart_height + 40))
         player.update_reload()
         player.draw_ammo(screen)
+
 
         pygame.display.flip()
         clock.tick(FPS)
