@@ -41,6 +41,7 @@ GRAY = (100, 100, 100)
 
 # Font
 font = pygame.font.Font("04B_30__.TTF", 26)
+gameover_font = pygame.font.Font("04B_30__.TTF", 50)
 
 # Game clock
 clock = pygame.time.Clock()
@@ -797,6 +798,10 @@ class Zombie(pygame.sprite.Sprite):
         self.smoothing_factor = 0.2 
         self.next_waypoint = None
         self.path_update_timer = pygame.time.get_ticks()
+        self.last_path_update_time = pygame.time.get_ticks()
+        self.has_active_path = True
+        self.stuck_timer = 0
+        self.max_stuck_time = 5000
         
         # Add a circular collision radius for distance checks
         self.collision_radius = self.rect.width // 2
@@ -822,6 +827,28 @@ class Zombie(pygame.sprite.Sprite):
 
     def update(self):
         current_time = pygame.time.get_ticks()
+        
+        # Update path periodically or if current path is empty
+        if (current_time - self.path_update_timer > self.path_update_interval or 
+            not self.path or self.current_target_index >= len(self.path)):
+            old_has_path = bool(self.path)
+            self.path_update_timer = current_time
+            self.update_path()
+            
+            # Update stuck timer based on path status
+            if self.path:
+                self.has_active_path = True
+                self.stuck_timer = 0
+            else:
+                self.has_active_path = False
+                if old_has_path:  # Only start timer if we just lost our path
+                    self.stuck_timer = current_time
+        
+        # Check if zombie is stuck without a path for too long
+        if not self.has_active_path and self.stuck_timer > 0:
+            if current_time - self.stuck_timer > self.max_stuck_time:
+                self.kill()
+                return
         
         # Update path periodically or if current path is empty
         if (current_time - self.path_update_timer > self.path_update_interval or 
@@ -927,12 +954,43 @@ class Zombie(pygame.sprite.Sprite):
         # Update zombie positions in pathfinding grid
         pathfinding_grid.update_zombie_positions(zombies)
         
-        # Get new path
-        self.path = pathfinding_grid.find_path(
-            self.rect.center, 
-            player.rect.center
-        )
+        # Get new path - use screen center if player is None (shouldn't happen but just in case)
+        target_pos = player.rect.center if hasattr(player, 'rect') else (WIDTH//2, HEIGHT//2)
+        
+        # If zombie is outside screen, first path to screen edge
+        if (self.rect.right < 0 or self.rect.left > WIDTH or
+            self.rect.bottom < 0 or self.rect.top > HEIGHT):
+            # Find closest screen edge point
+            target_x = max(0, min(WIDTH, self.rect.centerx))
+            target_y = max(0, min(HEIGHT, self.rect.centery))
+            edge_target = (target_x, target_y)
+            
+            # Get path to screen edge first
+            self.path = pathfinding_grid.find_path(self.rect.center, edge_target)
+        else:
+            # Normal path to player
+            self.path = pathfinding_grid.find_path(self.rect.center, target_pos)
+            
         self.current_target_index = 0
+        
+        # If no path found, try again with adjusted positions
+        if not self.path:
+            adjusted_start = pathfinding_grid.find_nearest_walkable(
+                self.rect.centerx // GRID_SIZE,
+                self.rect.centery // GRID_SIZE
+            )
+            adjusted_start = (adjusted_start[0] * GRID_SIZE + GRID_SIZE//2,
+                            adjusted_start[1] * GRID_SIZE + GRID_SIZE//2)
+            
+            adjusted_target = pathfinding_grid.find_nearest_walkable(
+                target_pos[0] // GRID_SIZE,
+                target_pos[1] // GRID_SIZE
+            )
+            adjusted_target = (adjusted_target[0] * GRID_SIZE + GRID_SIZE//2,
+                            adjusted_target[1] * GRID_SIZE + GRID_SIZE//2)
+            
+            self.path = pathfinding_grid.find_path(adjusted_start, adjusted_target)
+            self.current_target_index = 0
 
 
 class TankZombie(Zombie):
@@ -1105,7 +1163,8 @@ def show_start_menu():
 def show_death_screen():
     while True:
         screen.fill(BLACK)
-        game_over_text = font.render("Game Over", True, RED)
+        
+        game_over_text = gameover_font.render("Game Over", True, RED)
         restart_text = font.render("Press R to Restart or Q to Quit", True, WHITE)
         screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 50))
         screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 10))
@@ -1294,21 +1353,26 @@ def handle_stuck_entities():
 
 def contain_zombies():
     for zombie in zombies:
-        # Check if zombie is outside screen
-        if (zombie.rect.right < 0 or zombie.rect.left > WIDTH or
-            zombie.rect.bottom < 0 or zombie.rect.top > HEIGHT):
+        # Calculate push vector to keep zombie inside screen
+        push_x, push_y = 0, 0
+        
+        if zombie.rect.right < 0:
+            push_x = 5  # Push right
+        elif zombie.rect.left > WIDTH:
+            push_x = -5  # Push left
             
-            # Push towards center of screen
-            center_x, center_y = WIDTH // 2, HEIGHT // 2
-            push_dir = pygame.math.Vector2(center_x - zombie.rect.centerx, 
-                                         center_y - zombie.rect.centery)
-            if push_dir.length() > 0:
-                push_dir = push_dir.normalize()
+        if zombie.rect.bottom < 0:
+            push_y = 5  # Push down
+        elif zombie.rect.top > HEIGHT:
+            push_y = -5  # Push up
             
-            # Apply push
-            zombie.rect.centerx += push_dir.x * 5
-            zombie.rect.centery += push_dir.y * 5
+        # Apply push if needed
+        if push_x or push_y:
+            zombie.rect.x += push_x
+            zombie.rect.y += push_y
             zombie.collision_rect.center = zombie.rect.center
+            
+            zombie.path_update_timer = 0  # Will cause path to update next frame
         
 
 def initialize_game():
@@ -1581,6 +1645,12 @@ def main():
                 sprite.draw(screen)
             else:
                 screen.blit(sprite.image, sprite.rect.topleft)
+
+        for zombie in zombies:
+            if hasattr(zombie, 'stuck_timer') and zombie.stuck_timer > 0:
+                current_time = pygame.time.get_ticks()
+                if current_time - zombie.stuck_timer > zombie.max_stuck_time:
+                    zombie.kill()
 
         # Draw Zombie HB
         for zombie in zombies:
