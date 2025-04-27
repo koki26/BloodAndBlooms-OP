@@ -19,11 +19,39 @@ F5 = Obstacles
 # Initialize pygame
 pygame.init()
 
+# Load sounds
+gunshot_sound = pygame.mixer.Sound("sounds/gunshot.mp3")
+reload_sound = pygame.mixer.Sound("sounds/reload.mp3")
+zombie_death_sound = pygame.mixer.Sound("sounds/zombie_death.mp3")
+player_hurt_sound = pygame.mixer.Sound("sounds/player_hurt.mp3")
+shop_open_sound = pygame.mixer.Sound("sounds/shop_open.mp3")
+shop_buy_sound = pygame.mixer.Sound("sounds/shop_buy.mp3")
+sound_track = pygame.mixer.Sound("sounds/sound_track.mp3")
+start_sound = pygame.mixer.Sound("sounds/start.mp3")
+gameover_sound = pygame.mixer.Sound("sounds/gameover.mp3")
+background_music = pygame.mixer.Sound("sounds/background.mp3")
+crop_planted_sound = pygame.mixer.Sound("sounds/crop_planted.mp3")
+crop_harvested_sound = pygame.mixer.Sound("sounds/crop_harvested.mp3")
+spitter_attack_sound = pygame.mixer.Sound("sounds/spit.mp3")
+
+# Volumes and set number of chanels
+pygame.mixer.set_num_channels(32)
+gunshot_sound.set_volume(0.15)
+zombie_death_sound.set_volume(0.1)
+shop_buy_sound.set_volume(0.2)
+shop_open_sound.set_volume(0.1)
+sound_track.set_volume(0.3)
+start_sound.set_volume(0.3)
+gameover_sound.set_volume(0.3)
+background_music.set_volume(0.1)
+player_hurt_sound.set_volume(0.3)
+spitter_attack_sound.set_volume(0.3)
+
 # Screen dimensions
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Blood And Blooms")
-icon = pygame.image.load("zombie.png")
+icon = pygame.image.load("Images/zombie.png")
 pygame.display.set_icon(icon)
 
 # Colors
@@ -39,9 +67,10 @@ ORANGE = (255, 165, 0)
 PURPLE = (128, 0, 128)
 GRAY = (100, 100, 100)
 
-# Font
+# Fonts
 font = pygame.font.Font("04B_30__.TTF", 26)
 gameover_font = pygame.font.Font("04B_30__.TTF", 50)
+shop_font = pygame.font.Font("04B_30__.TTF", 32)
 
 # Game clock
 clock = pygame.time.Clock()
@@ -53,7 +82,7 @@ DEBUG_SHOW_GRID = False
 DEBUG_SHOW_PATHS = False
 DEBUG_SHOW_OBSTACLES = False
 
-# Wave timeout variables
+# Variables
 WAVE_TIMEOUT = 60000
 WAVE_WARNING_DURATION = 10000 
 shop_open_time = 0
@@ -271,6 +300,10 @@ class PlayerHealth:
     def take_damage(self, amount):
         current_time = pygame.time.get_ticks()
         if not self.is_invincible or current_time - self.last_hit_time > self.iframes_duration:
+            player_hurt_sound.play()
+            for _ in range(random.randint(8, 15)):
+                        particle = BloodParticle(player.rect.centerx, player.rect.centery)
+                        all_sprites.add(particle)
             self.hearts -= amount
             self.last_hit_time = current_time
             self.is_invincible = True
@@ -308,7 +341,7 @@ class Weapon:
     def __init__(self, name, damage, fire_rate, ammo, reload_time, cost, 
                  spread=0, projectile_speed=15, is_automatic=False, max_range=500):
         self.name = name
-        self.combined_image = pygame.image.load(f"player_{name.lower()}.png").convert_alpha()
+        self.combined_image = pygame.image.load(f"Images/player_{name.lower()}.png").convert_alpha()
         
         self.damage = damage
         self.fire_rate = fire_rate
@@ -335,6 +368,9 @@ weapons["Pistol"].purchased = True  # Starting weapon is already purchased
 
 # Shop function
 def show_shop():
+    
+    shop_open_sound.play()
+
     global shop_open_time, time_spent_in_shop, is_shop_open, player_money
 
     is_shop_open = True
@@ -357,6 +393,7 @@ def show_shop():
                 weapon.purchased = True
                 player.purchased_weapons.append(weapon_name)
                 player.equip_weapon(weapon_name)
+                shop_buy_sound.play()
             else:
                 popup_message = "Not enough money!"
                 popup_start_time = pygame.time.get_ticks()
@@ -365,12 +402,15 @@ def show_shop():
         screen.fill(BLACK)
         
         # Current balance
-        balance_text = font.render(f"Balance: ${player_money}", True, WHITE)
-        screen.blit(balance_text, (WIDTH//2 - balance_text.get_width()//2, 30))
+        balance_text = font.render(f"Balance: ${player_money}", True, GREEN)
+        screen.blit(balance_text, (WIDTH//2 - balance_text.get_width()//2, 80))
         
         # Shop title
-        title_text = font.render("Shop (Press 1-3 to buy/equip, ESC to exit)", True, WHITE)
-        screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 80))
+        title_text = shop_font.render("Shop", True, WHITE)
+        screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 30))
+
+        info_text = font.render("Press 1-3 to buy/equip or ESC to exit)", True, WHITE)
+        screen.blit(info_text, (WIDTH//2 - info_text.get_width()//2, 670))
         
         # Weapon listings
         y_offset = 150
@@ -392,12 +432,12 @@ def show_shop():
             
             entry_text = f"{i}. {weapon_name}{status} - ${weapon.cost if not weapon.purchased else 'OWNED'}"
             text_surface = font.render(entry_text, True, text_color)
-            screen.blit(text_surface, (WIDTH//2 - 200, y_offset))
+            screen.blit(text_surface, (WIDTH//2 - 350, y_offset))
             
             # Weapon stats
             stats_text = f"Dmg: {weapon.damage} | Fire Rate: {weapon.fire_rate/1000:.1f}s | Ammo: {weapon.ammo}"
             stats_surface = font.render(stats_text, True, LIGHT_GRAY)
-            screen.blit(stats_surface, (WIDTH//2 - 200, y_offset + 30))
+            screen.blit(stats_surface, (WIDTH//2 - 350, y_offset + 30))
             
             y_offset += 80
 
@@ -420,6 +460,8 @@ def show_shop():
                     shop_running = False
                     is_shop_open = False
                     time_spent_in_shop += pygame.time.get_ticks() - shop_open_time
+                    shop_open_sound.stop()
+                    shop_buy_sound.stop()
                 
                 # Handle weapon selection
                 if event.key == pygame.K_1:
@@ -428,6 +470,51 @@ def show_shop():
                     handle_weapon_selection("Rifle", weapons["Rifle"])
                 if event.key == pygame.K_3:
                     handle_weapon_selection("Sniper", weapons["Sniper"])
+
+class BloodParticle(pygame.sprite.Sprite):
+    def __init__(self, x, y, angle=None):
+        super().__init__()
+        self.size = random.randint(3, 7)
+        self.image = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
+        
+        # Blood color variations
+        blood_colors = [
+            (200, 0, 0),    # Dark red
+            (150, 0, 0),    # Deeper red
+            (255, 50, 50),  # Bright red
+            (180, 30, 30)  # Medium red
+        ]
+        pygame.draw.circle(self.image, random.choice(blood_colors), 
+                          (self.size//2, self.size//2), self.size//2)
+        
+        self.rect = self.image.get_rect(center=(x, y))
+        
+        self.velocity = pygame.math.Vector2(
+            random.uniform(-3, 3),
+            random.uniform(-3, 0)
+        )
+            
+        self.gravity = 0.2
+        self.lifetime = random.randint(800, 1200)
+        self.spawn_time = pygame.time.get_ticks()
+        self.alpha = 255
+
+    def update(self):
+        # Apply gravity
+        self.velocity.y += self.gravity
+        
+        # Update position
+        self.rect.x += self.velocity.x
+        self.rect.y += self.velocity.y
+        
+        # Fade out
+        elapsed = pygame.time.get_ticks() - self.spawn_time
+        if elapsed > self.lifetime / 2:
+            self.alpha = max(0, 255 - int(255 * (elapsed / self.lifetime)))
+            self.image.set_alpha(self.alpha)
+        
+        if elapsed > self.lifetime:
+            self.kill()
 
 # Player class
 class Player(pygame.sprite.Sprite):
@@ -457,6 +544,8 @@ class Player(pygame.sprite.Sprite):
         self.is_reloading = False
         self.last_shot_time = 0
         self.reload_start_time = 0
+        self.last_sound_time = 0  
+        self.sound_rate = 100
         
     def update(self):
         keys = pygame.key.get_pressed()
@@ -509,7 +598,10 @@ class Player(pygame.sprite.Sprite):
 
         # Automatic firing for rifle
         if self.weapon.is_automatic and keys[pygame.K_SPACE]:
-            self.shoot()
+            if self.can_shoot():
+                self.shoot()
+
+
         
     def equip_weapon(self, weapon_name):
         if weapon_name in self.purchased_weapons:
@@ -530,7 +622,7 @@ class Player(pygame.sprite.Sprite):
         if not self.is_reloading and self.ammo < self.weapon.ammo:
             self.is_reloading = True
             self.reload_start_time = pygame.time.get_ticks()
-            # Add a reload sound effect here
+            reload_sound.play()
     
     def update_reload(self):
         if self.is_reloading:
@@ -538,7 +630,7 @@ class Player(pygame.sprite.Sprite):
             if current_time - self.reload_start_time >= self.weapon.reload_time:
                 self.ammo = self.weapon.ammo
                 self.is_reloading = False
-                # Add a reload complete sound effect here
+
 
     def draw_ammo(self, screen):
         # Draw ammo counter
@@ -590,6 +682,8 @@ class Player(pygame.sprite.Sprite):
             # Update ammo and cooldown
             self.ammo -= 1
             self.last_shot_time = pygame.time.get_ticks()
+
+            gunshot_sound.play()
 
             # Auto-reload when empty
             if self.ammo <= 0:
@@ -788,7 +882,7 @@ class SpitProjectile(pygame.sprite.Sprite):
 class Zombie(pygame.sprite.Sprite):
     def __init__(self, x, y, image_path):
         super().__init__()
-        self.original_image = pygame.image.load(image_path).convert_alpha()
+        self.original_image = pygame.image.load("Images/" + image_path).convert_alpha()
         self.image = self.original_image  # Default image without rotation
         self.rect = self.image.get_rect(center=(x, y))
         self.mask = pygame.mask.from_surface(self.image)
@@ -893,8 +987,11 @@ class Zombie(pygame.sprite.Sprite):
                 offset_x = player.rect.left - self.rect.left
                 offset_y = player.rect.top - self.rect.top
                 if player.mask.overlap(self.mask, (offset_x, offset_y)):
+                    for _ in range(random.randint(8, 15)):
+                        particle = BloodParticle(player.rect.centerx, player.rect.centery)
+                        all_sprites.add(particle)
                     if player_health.take_damage(1):  
-                        show_death_screen()
+                        play_death_animation()
                     
                     # Push zombie back slightly when attacking player
                     push_dir = pygame.math.Vector2(self.rect.center) - pygame.math.Vector2(player.rect.center)
@@ -1057,6 +1154,7 @@ class SpitterZombie(Zombie):
         
         # Create and add the spit projectile
         spit = SpitProjectile(self.rect.centerx, self.rect.centery, direction)
+        spitter_attack_sound.play()
         all_sprites.add(spit)
         spit_projectiles.add(spit)
   
@@ -1072,6 +1170,7 @@ class Farm:
             self.seed_planted = pygame.time.get_ticks()
             # Initialize multiple wheat stalks with random positions within the farm area
             self.stalks = []
+            crop_planted_sound.play()
             for _ in range(20):  # Number of wheat stalks
                 x = random.randint(self.rect.left + 10, self.rect.right - 10)
                 y = random.randint(self.rect.top + 10, self.rect.bottom - 10)
@@ -1086,6 +1185,7 @@ class Farm:
                 player_money += random.randint(10, 20)
                 self.seed_planted = None
                 self.stalks = []  # Clear the stalks after harvesting
+                crop_harvested_sound.play()
 
     def draw(self, screen):
         pygame.draw.rect(screen, BROWN, self.rect)  # Draw the farm soil
@@ -1130,9 +1230,11 @@ class Farm:
         
 def show_start_menu():
     menu = [
-        pygame.image.load("menu.jpg").convert_alpha(),
-        pygame.image.load("menu1.jpg").convert_alpha()
+        pygame.image.load("Images/menu.jpg").convert_alpha(),
+        pygame.image.load("Images/menu1.jpg").convert_alpha()
     ]
+    
+    sound_track.play(loops=-1)
 
     value = 0
     running = True
@@ -1145,6 +1247,9 @@ def show_start_menu():
                 exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
+                    sound_track.stop()
+                    pygame.time.wait(150)
+                    start_sound.play()
                     running = False
 
         screen.fill(BLACK)
@@ -1161,27 +1266,234 @@ def show_start_menu():
 
 # Function to show the death screen
 def show_death_screen():
+    skull_surface = pygame.image.load("Images/death.png")
+    
+    skull_pos = (WIDTH//2 - 45, HEIGHT//2 - 150)
+    
+    # Blood drip
+    blood_drops = []
+    for i in range(20):
+        blood_drops.append({
+            'x': random.randint(skull_pos[0], skull_pos[0] + 64),
+            'y': skull_pos[1] + 64,
+            'speed': random.uniform(2, 5),
+            'size': random.randint(2, 5)
+        })
+    
+    # Animation timer
+    start_time = pygame.time.get_ticks()
+    animation_duration = 1500 
+    
     while True:
+        current_time = pygame.time.get_ticks()
+        progress = min(1.0, (current_time - start_time) / animation_duration)
+        
         screen.fill(BLACK)
         
-        game_over_text = gameover_font.render("Game Over", True, RED)
-        restart_text = font.render("Press R to Restart or Q to Quit", True, WHITE)
-        screen.blit(game_over_text, (WIDTH // 2 - game_over_text.get_width() // 2, HEIGHT // 2 - 50))
-        screen.blit(restart_text, (WIDTH // 2 - restart_text.get_width() // 2, HEIGHT // 2 + 10))
+        for drop in blood_drops:
+            drop['y'] += drop['speed']
+            pygame.draw.rect(screen, RED, 
+                           (drop['x'], drop['y'], drop['size'], drop['size']))
+            
+            # Reset drops that fall off screen
+            if drop['y'] > HEIGHT:
+                drop['y'] = skull_pos[1] + 64
+                drop['x'] = random.randint(skull_pos[0], skull_pos[0] + 64)
+        
+        skull_surface.set_alpha(int(255 * progress))
+        screen.blit(skull_surface, skull_pos)
+        
+        # Draw text 
+        game_over_text = gameover_font.render("GAME OVER", True, 
+                                           (min(255, int(255 * progress * 2)), 0, 0))
+        restart_text = font.render("Press R to Restart or Q to Quit", True, 
+                                (min(255, int(255 * progress * 2)), 
+                                 min(255, int(255 * progress * 2)), 
+                                 min(255, int(255 * progress * 2))))
+        
+        screen.blit(game_over_text, (WIDTH//2 - game_over_text.get_width()//2, 
+                                   HEIGHT//2 - 50))
+        screen.blit(restart_text, (WIDTH//2 - restart_text.get_width()//2, 
+                                 HEIGHT//2 + 50))
+        
         pygame.display.flip()
+        
+        # Check for input after animation completes
+        if progress >= 1.0:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_r:
+                        initialize_game()
+                        return
+                    if event.key == pygame.K_q:
+                        pygame.quit()
+                        exit()
+        
+        clock.tick(FPS)
 
+class HeartExplosion:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.start_time = pygame.time.get_ticks()
+        self.duration = 3000
+        self.heart_img = self.create_heart_image()
+        self.particles = []
+        self.light_beams = []
+        
+    def create_heart_image(self):
+        # Create a pixel art heart surface
+        heart_size = 64
+        heart = pygame.Surface((heart_size, heart_size), pygame.SRCALPHA)
+        
+        # Pixel pattern for the heart (1 = pixel, 0 = transparent)
+        pattern = [
+            [0,1,1,0,1,1,0],
+            [1,1,1,1,1,1,1],
+            [1,1,1,1,1,1,1],
+            [1,1,1,1,1,1,1],
+            [0,1,1,1,1,1,0],
+            [0,0,1,1,1,0,0],
+            [0,0,0,1,0,0,0]
+        ]
+        
+        # Scale up the pixels
+        pixel_size = heart_size // 7
+        for py in range(7):
+            for px in range(7):
+                if pattern[py][px]:
+                    pygame.draw.rect(heart, RED, 
+                                    (px*pixel_size, py*pixel_size, 
+                                     pixel_size, pixel_size))
+        return heart
+    
+    def create_particles(self):
+        # Create heart fragment particles
+        heart_size = self.heart_img.get_size()
+        for _ in range(20):  
+            # Create a random rectangular section of the heart
+            piece_w = random.randint(heart_size[0]//4, heart_size[0]//2)
+            piece_h = random.randint(heart_size[1]//4, heart_size[1]//2)
+            piece_x = random.randint(0, heart_size[0]-piece_w)
+            piece_y = random.randint(0, heart_size[1]-piece_h)
+            
+            # Create the piece surface
+            piece = pygame.Surface((piece_w, piece_h), pygame.SRCALPHA)
+            piece.blit(self.heart_img, (0,0), (piece_x, piece_y, piece_w, piece_h))
+            
+            # Particle properties
+            self.particles.append({
+                'image': piece,
+                'x': self.x + piece_x - heart_size[0]//2,
+                'y': self.y + piece_y - heart_size[1]//2,
+                'vel_x': random.uniform(-2, 2),
+                'vel_y': random.uniform(-5, -2),
+                'angle': 0,
+                'angle_vel': random.uniform(-3, 3),
+                'alpha': 255,
+                'fade_speed': random.uniform(0.5, 2.0)
+            })
+    
+    def update(self):
+        current_time = pygame.time.get_ticks()
+        progress = min(1.0, (current_time - self.start_time) / self.duration)
+        
+        # Create particles at 20% progress
+        if progress >= 0.2 and not self.particles:
+            self.create_particles()
+        
+        
+        # Update particles
+        for particle in self.particles:
+            particle['x'] += particle['vel_x']
+            particle['y'] += particle['vel_y']
+            particle['vel_y'] += 0.1  # Gravity
+            particle['angle'] += particle['angle_vel']
+            particle['alpha'] = max(0, particle['alpha'] - particle['fade_speed'])
+            particle['image'].set_alpha(particle['alpha'])
+        
+        return progress >= 1.0
+    
+    def draw(self, screen):
+        current_time = pygame.time.get_ticks()
+        progress = min(1.0, (current_time - self.start_time) / self.duration)
+        
+        # Draw the whole heart before it breaks (first 20% of animation)
+        if progress < 0.2:
+            scaled_heart = pygame.transform.scale(
+                self.heart_img,
+                (int(self.heart_img.get_width()),
+                 int(self.heart_img.get_height()))
+            )
+            heart_rect = scaled_heart.get_rect(center=(self.x, self.y))
+            screen.blit(scaled_heart, heart_rect)
+        
+        # Draw particles
+        for particle in self.particles:
+            if particle['alpha'] > 0:
+                rotated_piece = pygame.transform.rotate(particle['image'], particle['angle'])
+                piece_rect = rotated_piece.get_rect(center=(particle['x'], particle['y']))
+                screen.blit(rotated_piece, piece_rect.topleft)
+
+def play_death_animation():
+    global background
+
+    background_music.stop()
+
+    gameover_sound.play()
+    
+    # Create the heart explosion effect at player's position
+    heart_explosion = HeartExplosion(player.rect.centerx, player.rect.centery)
+    
+    # Create a darkening overlay
+    darken_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    darken_surface.fill((0, 0, 0, 0))
+    
+    # Animation loop
+    running = True
+    start_time = pygame.time.get_ticks()
+    
+    while running:
+        current_time = pygame.time.get_ticks()
+        progress = min(1.0, (current_time - start_time) / heart_explosion.duration)
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
-                    initialize_game()  
-                    main()
-                    return
-                if event.key == pygame.K_q:
-                    pygame.quit()
-                    exit()
+        
+        # Update effects
+        done = heart_explosion.update()
+        
+        if background:
+            screen.blit(background, (0, 0))
+        else:
+            screen.fill(BLACK)
+        
+        # Draw game objects (fading out)
+        for sprite in all_sprites:
+            temp_img = sprite.image.copy()
+            temp_img.set_alpha(255 - int(255 * progress))
+            screen.blit(temp_img, sprite.rect.topleft)
+        
+        # Draw heart explosion effect
+        heart_explosion.draw(screen)
+        
+        # Darken screen progressively
+        darken_alpha = int(200 * progress)
+        darken_surface.fill((0, 0, 0, darken_alpha))
+        screen.blit(darken_surface, (0, 0))
+        
+        pygame.display.flip()
+        clock.tick(FPS)
+        
+        if done:
+            running = False
+
+    show_death_screen()
 
 def handle_zombie_collisions():
     # Spatial partitioning for better performance
@@ -1384,6 +1696,8 @@ def initialize_game():
     wave_ready = False
     zombie_health = 100 # Edit for cheats and debug
 
+    background_music.play(loops=-1)
+
     # Initialize pathfinding grid
     pathfinding_grid = PathfindingGrid()
 
@@ -1432,8 +1746,11 @@ def check_wave_timeout():
     
     # If warning is active and 10 seconds have passed
     if showing_wave_warning and current_time - warning_start_time > WAVE_WARNING_DURATION:
+        for _ in range(random.randint(8, 15)):
+            particle = BloodParticle(player.rect.centerx, player.rect.centery)
+            all_sprites.add(particle)
         if player_health.take_damage(1):  
-            show_death_screen()
+            play_death_animation()
             return
         zombie_wave += 1
         zombie_health += 10
@@ -1518,7 +1835,7 @@ def draw_debug_info(screen):
         screen.blit(text_surface, (10, HEIGHT - 150 + i * 25))
 
 def main():
-    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, DEBUG_MODE, DEBUG_SHOW_GRID, DEBUG_SHOW_OBSTACLES, DEBUG_SHOW_PATHS
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, DEBUG_MODE, DEBUG_SHOW_GRID, DEBUG_SHOW_OBSTACLES, DEBUG_SHOW_PATHS, background
 
     initialize_game() 
 
@@ -1553,6 +1870,8 @@ def main():
 
                 keys = pygame.key.get_pressed()
                 if keys[pygame.K_SPACE] and player.can_shoot():
+
+                    gunshot_sound.play()
                     
                     direction = pygame.math.Vector2(
                         math.cos(math.radians(player.angle)),
@@ -1618,16 +1937,23 @@ def main():
         for bullet in bullets:
             hit_zombies = pygame.sprite.spritecollide(bullet, zombies, False)
             for zombie in hit_zombies:
+                for _ in range(random.randint(5, 10)):
+                    particle = BloodParticle(zombie.rect.centerx, zombie.rect.centery)
+                    all_sprites.add(particle)
                 zombie.health -= player.weapon.damage 
                 bullet.kill()
                 if zombie.health <= 0:
+                    zombie_death_sound.play()
                     zombie.kill()
         
         # Check spit collisions with player
         if not DEBUG_MODE:
             for spit in pygame.sprite.spritecollide(player, spit_projectiles, True):
+                for _ in range(random.randint(3, 6)):
+                    particle = BloodParticle(player.rect.centerx, player.rect.centery)
+                    all_sprites.add(particle)
                 if player_health.take_damage(1):  # 1 heart of damage per spit
-                    show_death_screen()
+                    play_death_animation()
         
 
         # In the wave progression section (after zombie kill check)
