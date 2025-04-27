@@ -1,12 +1,17 @@
 import pygame
 import random
 import math
+import heapq
 
 
 """
 Excessive comment lines were used for CTRL + F to find important functions/classes more easily while coding
 Every function/class is commented with a space right after #
-For easier debugging or testing, edit values that are commented using: " # Edit for cheats and debug "
+For easier debugging or testing, edit values that are commented using: " # Edit for cheats and debug " or by pressing
+F2 = Toggle debug mode
+F3 = Grid
+F4 = Paths
+F5 = Obstacles
 
 """
 
@@ -18,6 +23,8 @@ pygame.init()
 WIDTH, HEIGHT = 1280, 720
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Blood And Blooms")
+icon = pygame.image.load("zombie.png")
+pygame.display.set_icon(icon)
 
 # Colors
 WHITE = (255, 255, 255)
@@ -39,12 +46,182 @@ font = pygame.font.Font("04B_30__.TTF", 26)
 clock = pygame.time.Clock()
 FPS = 60
 
+# DEBUG
+DEBUG_MODE = False
+DEBUG_SHOW_GRID = False
+DEBUG_SHOW_PATHS = False
+DEBUG_SHOW_OBSTACLES = False
+
 # Wave timeout variables
 WAVE_TIMEOUT = 60000
 WAVE_WARNING_DURATION = 10000 
 shop_open_time = 0
 time_spent_in_shop = 0
 is_shop_open = False 
+GRID_SIZE = 20
+GRID_WIDTH = WIDTH // GRID_SIZE
+GRID_HEIGHT = HEIGHT // GRID_SIZE
+
+COLLISION_RECTS = [ 
+    # Graves
+    pygame.Rect(65, 109, 86, 47),  
+    pygame.Rect(542, 443, 78, 64),
+    pygame.Rect(334, 497, 84, 36),
+    pygame.Rect(378, 199, 83, 35),
+    pygame.Rect(217, 489, 81, 50),
+    pygame.Rect(121, 433, 84, 38),
+    pygame.Rect(202, 84, 82, 56),
+    pygame.Rect(302, 149, 80, 53),
+    # Monument walls
+    pygame.Rect(880, 459, 278, 33),
+    pygame.Rect(1123, 491, 33, 134),
+    pygame.Rect(879, 623, 278, 34),
+]
+
+MONUMENT_WALLS = [ # Used just for bullet collisions
+    pygame.Rect(880, 459, 278, 33),
+    pygame.Rect(1123, 491, 33, 134),
+    pygame.Rect(879, 623, 278, 34)
+]
+
+
+class PathfindingGrid:
+    def __init__(self):
+        self.grid = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+        self.zombie_positions = set()  # Track zombie positions
+        self.update_obstacles()
+    
+    def update_obstacles(self):
+        # Clear grid
+        self.grid = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+        
+        # Mark graves as obstacles
+        for grave in COLLISION_RECTS:
+            x1 = grave.left // GRID_SIZE
+            y1 = grave.top // GRID_SIZE
+            x2 = grave.right // GRID_SIZE
+            y2 = grave.bottom // GRID_SIZE
+            
+            for x in range(x1, x2 + 1):
+                for y in range(y1, y2 + 1):
+                    if 0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT:
+                        self.grid[y][x] = 1  # 1 means obstacle
+        
+        # Mark zombie positions as temporary obstacles
+        for (zx, zy) in self.zombie_positions:
+            gx, gy = zx // GRID_SIZE, zy // GRID_SIZE
+            if 0 <= gx < GRID_WIDTH and 0 <= gy < GRID_HEIGHT:
+                self.grid[gy][gx] = 2  # 2 means temporary zombie obstacle
+
+    def update_zombie_positions(self, zombies):
+        self.zombie_positions = set()
+        for zombie in zombies:
+            # Store center position of each zombie
+            self.zombie_positions.add((zombie.rect.centerx, zombie.rect.centery))
+        self.update_obstacles()
+
+    def is_walkable(self, x, y):
+        if 0 <= x < GRID_WIDTH and 0 <= y < GRID_HEIGHT:
+            return self.grid[y][x] != 1  # Walkable if not a permanent obstacle
+        return False
+
+    def find_path(self, start_pos, end_pos):
+        # Convert to grid coordinates
+        start_node = (start_pos[0] // GRID_SIZE, start_pos[1] // GRID_SIZE)
+        end_node = (end_pos[0] // GRID_SIZE, end_pos[1] // GRID_SIZE)
+        
+        # If start or end is in obstacle, find nearest walkable
+        if not self.is_walkable(*start_node):
+            start_node = self.find_nearest_walkable(*start_node)
+        if not self.is_walkable(*end_node):
+            end_node = self.find_nearest_walkable(*end_node)
+            
+        # Use A* algorithm with priority queue for better performance
+        open_set = []
+        heapq.heappush(open_set, (0, start_node))
+        came_from = {}
+        
+        g_score = {start_node: 0}
+        f_score = {start_node: self.heuristic(start_node, end_node)}
+        
+        open_set_hash = {start_node}  # For quick lookup
+        
+        while open_set:
+            current = heapq.heappop(open_set)[1]
+            open_set_hash.remove(current)
+            
+            if current == end_node:
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.reverse()
+                # Smooth the path
+                return self.smooth_path([(x * GRID_SIZE + GRID_SIZE//2, y * GRID_SIZE + GRID_SIZE//2) 
+                                       for (x, y) in path])
+                
+            for dx, dy in [(0,1), (1,0), (0,-1), (-1,0), (1,1), (1,-1), (-1,1), (-1,-1)]:
+                neighbor = (current[0] + dx, current[1] + dy)
+                
+                if not self.is_walkable(*neighbor):
+                    continue
+                    
+                tentative_g = g_score[current] + (1.4 if dx and dy else 1)  # Diagonal cost
+                
+                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g
+                    f_score[neighbor] = tentative_g + self.heuristic(neighbor, end_node)
+                    if neighbor not in open_set_hash:
+                        heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                        open_set_hash.add(neighbor)
+        
+        return []  # No path found
+
+    def smooth_path(self, path):
+        # Simplify path by removing unnecessary waypoints
+        if len(path) < 3:
+            return path
+            
+        smoothed = [path[0]]
+        for i in range(1, len(path)-1):
+            prev = smoothed[-1]
+            next_p = path[i+1]
+            
+            # If the angle change is small, skip this point
+            angle1 = math.atan2(path[i][1]-prev[1], path[i][0]-prev[0])
+            angle2 = math.atan2(next_p[1]-path[i][1], next_p[0]-path[i][0])
+            if abs(angle1 - angle2) > math.pi/8:  # ~22.5 degree threshold
+                smoothed.append(path[i])
+                
+        smoothed.append(path[-1])
+        return smoothed
+
+    def heuristic(self, a, b):
+        # Euclidean distance
+        dx = abs(a[0] - b[0])
+        dy = abs(a[1] - b[1])
+        return dx + dy + (math.sqrt(2) - 2) * min(dx, dy)
+
+    def find_nearest_walkable(self, x, y):
+        # Find nearest walkable cell using Breadth First Search
+        queue = [(x, y)]
+        visited = set()
+        
+        while queue:
+            cx, cy = queue.pop(0)
+            if self.is_walkable(cx, cy):
+                return (cx, cy)
+                
+            visited.add((cx, cy))
+            
+            for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]:
+                nx, ny = cx + dx, cy + dy
+                if (0 <= nx < GRID_WIDTH and 0 <= ny < GRID_HEIGHT and 
+                    (nx, ny) not in visited):
+                    queue.append((nx, ny))
+                    
+        return (x, y)  # Fallback
 
 # Player health system with 3 hearts and invincibility frames
 class PlayerHealth:
@@ -60,7 +237,7 @@ class PlayerHealth:
         self.blink_timer = 0
         self.blink_speed = 150  # ms between blinks
 
-        # Pixel design (0=transparent, 1=red fill, 2=black outline)
+        # Pixel design (0=transparent, 1=fill, 2=fill [used to be outline])
         self.heart_pixels = [
             [0,1,1,0,1,1,0],
             [1,2,2,1,2,2,1],
@@ -125,7 +302,6 @@ class PlayerHealth:
 # Initialize player health
 player_health = PlayerHealth()
 
-
 # Weapon class
 class Weapon:
     def __init__(self, name, damage, fire_rate, ammo, reload_time, cost, 
@@ -156,10 +332,9 @@ weapons = {
 }
 weapons["Pistol"].purchased = True  # Starting weapon is already purchased
 
-
 # Shop function
 def show_shop():
-    global shop_open_time, time_spent_in_shop, is_shop_open
+    global shop_open_time, time_spent_in_shop, is_shop_open, player_money
 
     is_shop_open = True
     shop_open_time = pygame.time.get_ticks()  # Record when shop opens
@@ -167,10 +342,11 @@ def show_shop():
     shop_running = True
     popup_message = None
     popup_start_time = 0
-    POPUP_DURATION = 2000  
+    POPUP_DURATION = 2000  # 2 seconds
 
-    def handle_weapon_selection(weapon_name, key_number, weapon):
-        global player_money, popup_message, popup_start_time
+    def handle_weapon_selection(weapon_name, weapon):
+        nonlocal popup_message, popup_start_time
+        global player_money 
         
         if weapon.purchased:
             player.equip_weapon(weapon_name)
@@ -197,9 +373,10 @@ def show_shop():
         
         # Weapon listings
         y_offset = 150
-        for i, (weapon_name, weapon) in enumerate(weapons.items(), 1):
-            if weapon_name == "Pistol":
-                continue  # Skip default weapon
+        weapon_keys = ["Shotgun", "Rifle", "Sniper"]  # Only show purchasable weapons
+        
+        for i, weapon_name in enumerate(weapon_keys, 1):
+            weapon = weapons[weapon_name]
             
             # Weapon entry
             text_color = WHITE
@@ -212,12 +389,12 @@ def show_shop():
                 status = " (Purchased)"
                 text_color = LIGHT_GRAY
             
-            entry_text = f"{i-1}. {weapon_name}{status} - ${weapon.cost if not weapon.purchased else 'OWNED'}"
+            entry_text = f"{i}. {weapon_name}{status} - ${weapon.cost if not weapon.purchased else 'OWNED'}"
             text_surface = font.render(entry_text, True, text_color)
             screen.blit(text_surface, (WIDTH//2 - 200, y_offset))
             
             # Weapon stats
-            stats_text = f"Dmg: {weapon.damage} | Fire Rate: {weapon.fire_rate/1000} s | Ammo: {weapon.ammo}" # Note for my self: Consider showing fire rate in more understandible way
+            stats_text = f"Dmg: {weapon.damage} | Fire Rate: {weapon.fire_rate/1000:.1f}s | Ammo: {weapon.ammo}"
             stats_surface = font.render(stats_text, True, LIGHT_GRAY)
             screen.blit(stats_surface, (WIDTH//2 - 200, y_offset + 30))
             
@@ -226,7 +403,10 @@ def show_shop():
         # Display popup message if active
         if popup_message and pygame.time.get_ticks() - popup_start_time < POPUP_DURATION:
             popup_surface = font.render(popup_message, True, RED)
-            screen.blit(popup_surface, (WIDTH//2 - popup_surface.get_width()//2, HEIGHT - 100))
+            popup_rect = popup_surface.get_rect(center=(WIDTH//2, HEIGHT - 100))
+            pygame.draw.rect(screen, BLACK, (popup_rect.x-10, popup_rect.y-5, 
+                           popup_rect.width+20, popup_rect.height+10))
+            screen.blit(popup_surface, popup_rect)
         
         pygame.display.flip()
 
@@ -242,11 +422,11 @@ def show_shop():
                 
                 # Handle weapon selection
                 if event.key == pygame.K_1:
-                    handle_weapon_selection("Shotgun", 1, weapons["Shotgun"])
+                    handle_weapon_selection("Shotgun", weapons["Shotgun"])
                 if event.key == pygame.K_2:
-                    handle_weapon_selection("Rifle", 2, weapons["Rifle"])
+                    handle_weapon_selection("Rifle", weapons["Rifle"])
                 if event.key == pygame.K_3:
-                    handle_weapon_selection("Sniper", 3, weapons["Sniper"])
+                    handle_weapon_selection("Sniper", weapons["Sniper"])
 
 # Player class
 class Player(pygame.sprite.Sprite):
@@ -258,6 +438,11 @@ class Player(pygame.sprite.Sprite):
         self.mask = pygame.mask.from_surface(self.image)
         self.weapon = weapons["Pistol"]
         self.purchased_weapons = ["Pistol"]
+
+        self.rect = self.image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+        self.collision_radius = 20  
+        self.collision_rect = pygame.Rect(0, 0, self.collision_radius*2, self.collision_radius*2)
+        self.collision_rect.center = self.rect.center
         
         # Create a rect centered on screen
         self.rect = self.image.get_rect(center=(WIDTH // 2, HEIGHT // 2))
@@ -274,14 +459,38 @@ class Player(pygame.sprite.Sprite):
         
     def update(self):
         keys = pygame.key.get_pressed()
-        if keys[pygame.K_w] and self.rect.top > 0:
+
+        self.collision_rect.center = self.rect.center
+        
+        # Store previous position
+        prev_x, prev_y = self.true_position.x, self.true_position.y
+        
+        # Movement
+        if keys[pygame.K_w]:
             self.true_position.y -= self.speed
-        if keys[pygame.K_s] and self.rect.bottom < HEIGHT:
+            if self.true_position.y - self.rect.height/2 < 0:  
+                self.true_position.y = prev_y
+        if keys[pygame.K_s]:
             self.true_position.y += self.speed
-        if keys[pygame.K_a] and self.rect.left > 0:
+            if self.true_position.y + self.rect.height/2 > HEIGHT:  
+                self.true_position.y = prev_y
+        if keys[pygame.K_a]:
             self.true_position.x -= self.speed
-        if keys[pygame.K_d] and self.rect.right < WIDTH:
+            if self.true_position.x - self.rect.width/2 < 0: 
+                self.true_position.x = prev_x
+        if keys[pygame.K_d]:
             self.true_position.x += self.speed
+            if self.true_position.x + self.rect.width/2 > WIDTH:  
+                self.true_position.x = prev_x
+            
+        # Check for collisions with objects
+        player_rect = pygame.Rect(self.true_position.x - 20, self.true_position.y - 20, 40, 40)
+            
+        # Check collisions
+        for object_rect in COLLISION_RECTS:
+            if player_rect.colliderect(object_rect):
+                self.true_position.x, self.true_position.y = prev_x, prev_y
+                break
 
         # Update angle based on mouse position
         mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -297,7 +506,7 @@ class Player(pygame.sprite.Sprite):
         # Update the rect position
         self.rect = self.image.get_rect(center=self.true_position + offset_rotated)
 
-        # Automatic firing for rifles
+        # Automatic firing for rifle
         if self.weapon.is_automatic and keys[pygame.K_SPACE]:
             self.shoot()
         
@@ -361,7 +570,7 @@ class Player(pygame.sprite.Sprite):
                 -math.sin(math.radians(self.angle))
             ).normalize()
 
-            gun_length = 30  
+            gun_length = 20
             muzzle_x = self.rect.centerx + gun_length * direction.x
             muzzle_y = self.rect.centery + gun_length * direction.y
             muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, self.angle)
@@ -385,7 +594,7 @@ class Player(pygame.sprite.Sprite):
             if self.ammo <= 0:
                 self.start_reload()
 
-    def shotgun_shot(self, direction, gun_length): # Does not work, fix later maybe
+    def shotgun_shot(self, gun_length): # Does not work, fix later maybe
             
             # Pass projectile_speed and max_range from the weapon
             bullet = Bullet(
@@ -397,7 +606,6 @@ class Player(pygame.sprite.Sprite):
             bullets.add(bullet)
 
     def sniper_shot(self, direction, gun_length):
-        print("Shot")
         # Pass projectile_speed and max_range directly
         bullet = Bullet(
             self.rect.centerx, self.rect.centery,
@@ -429,8 +637,6 @@ class Player(pygame.sprite.Sprite):
         all_sprites.add(bullet)
         bullets.add(bullet)
 
-
-
 # MuzzleFlasash class
 class MuzzleFlash(pygame.sprite.Sprite):
     def __init__(self, x, y, angle):
@@ -440,7 +646,6 @@ class MuzzleFlash(pygame.sprite.Sprite):
         
         # Generate random flash characteristics
         flash_size = random.randint(20, 30)
-        num_spikes = random.randint(4, 8)
         spike_length = random.randint(8, 15)
         
         # Create main flash surface
@@ -513,8 +718,6 @@ class MuzzleFlash(pygame.sprite.Sprite):
         if elapsed > self.duration:
             self.kill()
 
-
-
 # Bullet class
 class Bullet(pygame.sprite.Sprite):
     def __init__(self, x, y, direction, gun_length, angle, projectile_speed, max_range):
@@ -544,6 +747,11 @@ class Bullet(pygame.sprite.Sprite):
         self.rect.y += dy
         self.distance_traveled += math.sqrt(dx**2 + dy**2)  # Update distance traveled
 
+        for wall in MONUMENT_WALLS:
+            if self.rect.colliderect(wall):
+                self.kill()
+                return
+
         # Check if the bullet has exceeded its max distance
         if self.max_distance is not None and self.distance_traveled > self.max_distance:
             self.kill()
@@ -569,6 +777,12 @@ class SpitProjectile(pygame.sprite.Sprite):
             self.kill()
             spit_projectiles.remove(self)  # Remove from the projectiles group
 
+        for wall in MONUMENT_WALLS:
+            if self.rect.colliderect(wall):
+                self.kill()
+                spit_projectiles.remove(self)
+                return
+
 # Zombie class
 class Zombie(pygame.sprite.Sprite):
     def __init__(self, x, y, image_path):
@@ -577,45 +791,149 @@ class Zombie(pygame.sprite.Sprite):
         self.image = self.original_image  # Default image without rotation
         self.rect = self.image.get_rect(center=(x, y))
         self.mask = pygame.mask.from_surface(self.image)
+        self.path_update_interval = random.randint(300, 500)  
+        self.current_target_index = 0
+        self.path = []
+        self.smoothing_factor = 0.2 
+        self.next_waypoint = None
+        self.path_update_timer = pygame.time.get_ticks()
         
+        # Add a circular collision radius for distance checks
+        self.collision_radius = self.rect.width // 2
+        self.collision_rect = pygame.Rect(0, 0, self.collision_radius*2, self.collision_radius*2)
+        self.collision_rect.center = self.rect.center
+        
+        # Collision avoidance properties
+        self.avoidance_radius = self.collision_radius * 2.5  # Area to check for other zombies
+        self.avoidance_force = 0.7  # Strength of avoidance push
+        self.push_decay = 0.9  # How quickly push forces decay
+        
+        # Movement vectors for smoother collision response
+        self.velocity = pygame.math.Vector2(0, 0)
+        self.push_vector = pygame.math.Vector2(0, 0)
+
         # Adjust speed based on wave
         self.base_speed = 1.5  # Base zombie speed
         self.speed = self.base_speed + (zombie_wave * 0.1)  # Slight speed increase per wave
         self.max_health = zombie_health
         self.health = zombie_health
         self.target_offset = pygame.math.Vector2(random.uniform(-30, 30), random.uniform(-30, 30))  # Spread out movement
-        self.collision_radius = 20  # Smaller collision radius for smaller player model
+        
 
     def update(self):
-        # Find direction toward the player
-        target_pos = pygame.math.Vector2(player.rect.center) + self.target_offset
-        zombie_pos = pygame.math.Vector2(self.rect.center)
+        current_time = pygame.time.get_ticks()
         
-        # Calculate movement direction
-        direction = (target_pos - zombie_pos)
-        if direction.length() > 0:  # Only normalize if not zero vector
-            direction = direction.normalize()
+        # Update path periodically or if current path is empty
+        if (current_time - self.path_update_timer > self.path_update_interval or 
+            not self.path or self.current_target_index >= len(self.path)):
+            self.path_update_timer = current_time
+            self.update_path()
         
-        # Move zombie
-        self.rect.x += direction.x * self.speed
-        self.rect.y += direction.y * self.speed
-
-        # Rotate the zombie to face the player
-        rel_x, rel_y = player.rect.centerx - self.rect.centerx, player.rect.centery - self.rect.centery
-        angle = math.degrees(-math.atan2(rel_y, rel_x))
-        self.image = pygame.transform.rotate(self.original_image, angle)
+        # Follow path if we have one
+        if self.path and self.current_target_index < len(self.path):
+            target_pos = pygame.math.Vector2(self.path[self.current_target_index])
+            
+            # Calculate direction with smoothing
+            direction = (target_pos - pygame.math.Vector2(self.rect.center))
+            if direction.length() > 0:
+                direction = direction.normalize()
+            
+            # Apply movement with smoothing
+            self.rect.x += direction.x * self.speed
+            self.rect.y += direction.y * self.speed
+            
+            # Check if reached current waypoint 
+            if pygame.math.Vector2(self.rect.center).distance_to(target_pos) < 10:
+                self.current_target_index += 1
+        
+        # Avoid other zombies
+        self.avoid_collisions()
+        
+        # Rotate to face movement direction
+        if self.path and self.current_target_index < len(self.path):
+            target_pos = pygame.math.Vector2(self.path[self.current_target_index])
+            rel_x, rel_y = target_pos.x - self.rect.centerx, target_pos.y - self.rect.centery
+            self.angle = math.degrees(-math.atan2(rel_y, rel_x))
+        
+        self.image = pygame.transform.rotate(self.original_image, self.angle)
         self.rect = self.image.get_rect(center=self.rect.center)
+        
+    
+        # Check collision with player
+        if not DEBUG_MODE:
+            player_dist = pygame.math.Vector2(player.rect.center).distance_to(self.rect.center)
+            if player_dist < self.collision_radius + player.collision_radius:
+                offset_x = player.rect.left - self.rect.left
+                offset_y = player.rect.top - self.rect.top
+                if player.mask.overlap(self.mask, (offset_x, offset_y)):
+                    if player_health.take_damage(1):  
+                        show_death_screen()
+                    
+                    # Push zombie back slightly when attacking player
+                    push_dir = pygame.math.Vector2(self.rect.center) - pygame.math.Vector2(player.rect.center)
+                    if push_dir.length() > 0:
+                        push_dir = push_dir.normalize()
+                    self.rect.center += push_dir * 10 
 
-        # Adjust collision detection for smaller player model
-        if pygame.sprite.collide_circle(self, player):
-            offset_x = player.rect.left - self.rect.left
-            offset_y = player.rect.top - self.rect.top
-            if player.mask.overlap(self.mask, (offset_x, offset_y)):
-                if player_health.take_damage(1):  # 1 heart of damage per zombie hit
-                    show_death_screen()
-    @property
-    def radius(self):
-        return self.collision_radius
+    def avoid_collisions(self):
+        # Reset push vector each frame
+        self.push_vector = pygame.math.Vector2(0, 0)
+        neighbor_count = 0
+        
+        # Check against other zombies
+        for other in zombies:
+            if other != self:
+                # Calculate distance between centers
+                dist_vec = pygame.math.Vector2(other.rect.center) - pygame.math.Vector2(self.rect.center)
+                distance = dist_vec.length()
+                
+                # Calculate combined collision radius
+                min_distance = self.collision_radius + other.collision_radius
+                
+                if distance < self.avoidance_radius:
+                    # Calculate separation force (stronger when closer)
+                    if distance > 0:
+                        force = (self.avoidance_radius - distance) / self.avoidance_radius
+                        separation = -dist_vec.normalize() * force
+                        self.push_vector += separation
+                        neighbor_count += 1
+                    
+                    # Handle direct collisions
+                    if distance < min_distance:
+                        overlap = min_distance - distance
+                        if overlap > 0:
+                            # Calculate push direction and amount
+                            if distance > 0:
+                                push_dir = dist_vec.normalize()
+                            else:
+                                push_dir = pygame.math.Vector2(1, 0)  # Default if same position
+                            
+                            # Push away based on overlap
+                            push_amount = overlap * 0.5
+                            self.push_vector += -push_dir * push_amount
+        
+        # Apply averaged push force
+        if neighbor_count > 0:
+            self.push_vector /= neighbor_count
+        
+        # Apply push vector to position (with decay)
+        if self.push_vector.length() > 0:
+            self.rect.center += self.push_vector * self.avoidance_force
+            self.push_vector *= self.push_decay
+
+    def update_path(self):
+        global pathfinding_grid
+        
+        # Update zombie positions in pathfinding grid
+        pathfinding_grid.update_zombie_positions(zombies)
+        
+        # Get new path
+        self.path = pathfinding_grid.find_path(
+            self.rect.center, 
+            player.rect.center
+        )
+        self.current_target_index = 0
+
 
 class TankZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -625,7 +943,12 @@ class TankZombie(Zombie):
         self.max_health = 150 + (zombie_wave * 15)
         self.health = self.max_health
         self.speed = self.base_speed + (zombie_wave * 0.05)
-        self.collision_radius = 25 
+        self.collision_radius = 30  
+        self.avoidance_radius = 80  
+        self.avoidance_force = 0.5  
+        self.push_decay = 0.8  
+        self.collision_rect = pygame.Rect(0, 0, self.collision_radius*2, self.collision_radius*2)
+        self.collision_rect.center = self.rect.center
 
 class RunnerZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -635,7 +958,12 @@ class RunnerZombie(Zombie):
         self.max_health = 30 + (zombie_wave * 5)
         self.health = self.max_health
         self.speed = self.base_speed + (zombie_wave * 0.15)
-        self.collision_radius = 15 
+        self.collision_radius = 15  
+        self.avoidance_radius = 50  
+        self.avoidance_force = 0.3  
+        self.push_decay = 0.95  
+        self.collision_rect = pygame.Rect(0, 0, self.collision_radius*2, self.collision_radius*2)
+        self.collision_rect.center = self.rect.center
 
 class SpitterZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -647,7 +975,13 @@ class SpitterZombie(Zombie):
         self.speed = self.base_speed + (zombie_wave * 0.1)
         self.attack_cooldown = 2000
         self.last_attack = 0
-        self.collision_radius = 20
+        self.collision_radius = 20  
+        self.avoidance_radius = 70  
+        self.avoidance_force = 0.4  
+        self.push_decay = 0.9  
+        self.collision_rect = pygame.Rect(0, 0, self.collision_radius*2, self.collision_radius*2)
+        self.collision_rect.center = self.rect.center
+
 
     def update(self):
         super().update()
@@ -667,10 +1001,7 @@ class SpitterZombie(Zombie):
         spit = SpitProjectile(self.rect.centerx, self.rect.centery, direction)
         all_sprites.add(spit)
         spit_projectiles.add(spit)
-        
-
-
-
+  
 # Farm class
 class Farm:
     def __init__(self):
@@ -694,7 +1025,7 @@ class Farm:
             current_time = pygame.time.get_ticks()
             time_elapsed = (current_time - self.seed_planted) / 1000
             if time_elapsed >= 15:
-                player_money += 10
+                player_money += random.randint(10, 20)
                 self.seed_planted = None
                 self.stalks = []  # Clear the stalks after harvesting
 
@@ -738,24 +1069,37 @@ class Farm:
                 text = font.render("Mature!", True, WHITE)
                 text_rect = text.get_rect(center=(self.rect.centerx, self.rect.top - 20))
                 screen.blit(text, text_rect)
-
         
-# Function to show the starting menu
 def show_start_menu():
-    while True:
-        screen.fill(BLACK)
-        menu = pygame.image.load("menu.jpg").convert_alpha()
-        screen.blit(menu, (0, 0))
-        
-        pygame.display.flip()
+    menu = [
+        pygame.image.load("menu.jpg").convert_alpha(),
+        pygame.image.load("menu1.jpg").convert_alpha()
+    ]
 
+    value = 0
+    running = True
+    clock = pygame.time.Clock()
+
+    while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 exit()
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
-                    return
+                    running = False
+
+        screen.fill(BLACK)
+
+        # Show current menu image
+        menu_image = menu[value % len(menu)]
+        screen.blit(menu_image, (0, 0))
+        pygame.display.update()
+
+        value += 1
+        pygame.time.wait(500)  
+
+        clock.tick(60) 
 
 # Function to show the death screen
 def show_death_screen():
@@ -780,37 +1124,55 @@ def show_death_screen():
                     pygame.quit()
                     exit()
 
-
-
 def handle_zombie_collisions():
-        zombies_list = zombies.sprites()
-        for i in range(len(zombies_list)):
-            for j in range(i + 1, len(zombies_list)):
-                zombie1 = zombies_list[i]
-                zombie2 = zombies_list[j]
-                if pygame.sprite.collide_rect(zombie1, zombie2):
-                    # Calculate vector between centers
-                    dx = zombie1.rect.centerx - zombie2.rect.centerx
-                    dy = zombie1.rect.centery - zombie2.rect.centery
-                    distance = math.hypot(dx, dy)
-                    
-                    if distance == 0:
-                        dx = 1
-                        dy = 0
-                        distance = 5
-                    
-                    # Calculate minimum distance to prevent overlap (sum of radii)
-                    min_distance = (zombie1.rect.width + zombie2.rect.width) / 2  # Both are 40px wide
-                    overlap = min_distance - distance
-                    
-                    if overlap > 0:
-                        # Move each zombie away by half the overlap
-                        move_x = (dx / distance) * overlap / 2
-                        move_y = (dy / distance) * overlap / 2
-                        zombie1.rect.x += move_x
-                        zombie1.rect.y += move_y
-                        zombie2.rect.x -= move_x
-                        zombie2.rect.y -= move_y
+    # Spatial partitioning for better performance
+    spatial_grid = {}
+    cell_size = 100 
+    
+    # Assign zombies to grid cells
+    for zombie in zombies:
+        cell_x = zombie.rect.centerx // cell_size
+        cell_y = zombie.rect.centery // cell_size
+        cell_key = (cell_x, cell_y)
+        
+        if cell_key not in spatial_grid:
+            spatial_grid[cell_key] = []
+        spatial_grid[cell_key].append(zombie)
+    
+    # Check collisions within each cell and neighboring cells
+    for cell_key, cell_zombies in spatial_grid.items():
+        cell_x, cell_y = cell_key
+        
+        # Check all 9 neighboring cells (including current)
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                neighbor_key = (cell_x + dx, cell_y + dy)
+                
+                if neighbor_key in spatial_grid:
+                    # Check collisions between zombies in current cell and neighbor cell
+                    for zombie1 in cell_zombies:
+                        for zombie2 in spatial_grid[neighbor_key]:
+                            if zombie1 != zombie2 and id(zombie1) < id(zombie2):  # Avoid duplicate checks
+                                # Use circle-circle collision for quick check
+                                dist_vec = pygame.math.Vector2(zombie2.rect.center) - pygame.math.Vector2(zombie1.rect.center)
+                                distance = dist_vec.length()
+                                min_dist = zombie1.collision_radius + zombie2.collision_radius
+                                
+                                if distance < min_dist:
+                                    # Calculate overlap
+                                    overlap = min_dist - distance
+                                    
+                                    if overlap > 0:
+                                        # Calculate push direction
+                                        if distance > 0:
+                                            push_dir = dist_vec.normalize()
+                                        else:
+                                            push_dir = pygame.math.Vector2(1, 0)  # Default direction if same position
+                                        
+                                        # Push both zombies apart
+                                        push_amount = overlap * 0.5
+                                        zombie1.rect.center += -push_dir * push_amount
+                                        zombie2.rect.center += push_dir * push_amount
 
 # Sprite groups
 all_sprites = pygame.sprite.Group()
@@ -870,14 +1232,96 @@ def start_next_wave():
     time_spent_in_shop = 0  
     spawn_zombie()
 
+def handle_stuck_entities():
+
+    # Threshold ratio of overlapping pixels to total pixels (20%)
+    OVERLAP_THRESHOLD = 0.2
+    
+    # Check player collision
+    player_mask = pygame.mask.from_surface(player.image)
+    player_area = player_mask.count()
+    
+    for obj_rect in COLLISION_RECTS:
+        # Create a mask for the collision object
+        obj_mask = pygame.mask.Mask(obj_rect.size, True)
+        
+        # Calculate offset between player and object
+        offset_x = obj_rect.left - player.rect.left
+        offset_y = obj_rect.top - player.rect.top
+        
+        # Get overlapping area
+        overlap_area = player_mask.overlap_area(obj_mask, (offset_x, offset_y))
+        
+        # Only push if OVERLAP_THRESHOLD is overlaped
+        if overlap_area > player_area * OVERLAP_THRESHOLD:
+            # Calculate push direction from center
+            push_dir = pygame.math.Vector2(player.rect.center) - pygame.math.Vector2(obj_rect.center)
+            if push_dir.length() > 0:
+                push_dir = push_dir.normalize()
+            
+            # Push player away with force proportional to overlap
+            push_force = 5 * (overlap_area / player_area)
+            player.true_position += push_dir * push_force
+            player.rect.center = player.true_position
+    
+    # Check zombie collisions
+    for zombie in zombies:
+        zombie_mask = pygame.mask.from_surface(zombie.image)
+        zombie_area = zombie_mask.count()
+        
+        for obj_rect in COLLISION_RECTS:
+            # Create a mask for the collision object
+            obj_mask = pygame.mask.Mask(obj_rect.size, True)
+            
+            # Calculate offset between zombie and object
+            offset_x = obj_rect.left - zombie.rect.left
+            offset_y = obj_rect.top - zombie.rect.top
+            
+            # Get overlapping area
+            overlap_area = zombie_mask.overlap_area(obj_mask, (offset_x, offset_y))
+            
+            # Only push if OVERLAP_THRESHOLD overlaped
+            if overlap_area > zombie_area * OVERLAP_THRESHOLD:
+                # Calculate push direction from center
+                push_dir = pygame.math.Vector2(zombie.rect.center) - pygame.math.Vector2(obj_rect.center)
+                if push_dir.length() > 0:
+                    push_dir = push_dir.normalize()
+                
+                # Push zombie away with force proportional to overlap
+                push_force = 5 * (overlap_area / zombie_area)
+                zombie.rect.center += push_dir * push_force
+                zombie.collision_rect.center = zombie.rect.center
+
+def contain_zombies():
+    for zombie in zombies:
+        # Check if zombie is outside screen
+        if (zombie.rect.right < 0 or zombie.rect.left > WIDTH or
+            zombie.rect.bottom < 0 or zombie.rect.top > HEIGHT):
+            
+            # Push towards center of screen
+            center_x, center_y = WIDTH // 2, HEIGHT // 2
+            push_dir = pygame.math.Vector2(center_x - zombie.rect.centerx, 
+                                         center_y - zombie.rect.centery)
+            if push_dir.length() > 0:
+                push_dir = push_dir.normalize()
+            
+            # Apply push
+            zombie.rect.centerx += push_dir.x * 5
+            zombie.rect.centery += push_dir.y * 5
+            zombie.collision_rect.center = zombie.rect.center
+        
+
 def initialize_game():
-    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, wave_start_time, showing_wave_warning, warning_start_time
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, wave_start_time, showing_wave_warning, warning_start_time, pathfinding_grid
     
     # Reset game state variables
     zombie_wave = 0 # Edit for cheats and debug
     player_money = 0 # Edit for cheats and debug
     wave_ready = False
     zombie_health = 100 # Edit for cheats and debug
+
+    # Initialize pathfinding grid
+    pathfinding_grid = PathfindingGrid()
 
     # Wave timeout variables
     wave_start_time = 0
@@ -947,19 +1391,102 @@ def draw_wave_warning(screen):
         warning_text = font.render(f"Next wave forced in: {seconds_left}", True, RED)
         screen.blit(warning_text, (WIDTH // 2 - warning_text.get_width() // 2, 10))
 
+def draw_debug_info(screen):
+    if not DEBUG_MODE:
+        return
+    
+    # Create a temporary surface for transparent debug elements
+    debug_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    
+    # Draw grid if enabled
+    if DEBUG_SHOW_GRID:
+        for x in range(0, WIDTH, GRID_SIZE):
+            pygame.draw.line(debug_surface, (50, 50, 50, 100), (x, 0), (x, HEIGHT), 1)
+        for y in range(0, HEIGHT, GRID_SIZE):
+            pygame.draw.line(debug_surface, (50, 50, 50, 100), (0, y), (WIDTH, y), 1)
+    
+    # Draw obstacles if enabled
+    if DEBUG_SHOW_OBSTACLES:
+        # Draw collision boxes
+        for object in COLLISION_RECTS:
+            pygame.draw.rect(debug_surface, (255, 0, 0, 100), object, 2)
+        
+        # Draw grid obstacles
+        for y in range(GRID_HEIGHT):
+            for x in range(GRID_WIDTH):
+                if not pathfinding_grid.is_walkable(x, y):
+                    rect = pygame.Rect(x * GRID_SIZE, y * GRID_SIZE, GRID_SIZE, GRID_SIZE)
+                    pygame.draw.rect(debug_surface, (255, 0, 0, 50), rect)
+    
+    # Draw zombie paths if enabled
+    if DEBUG_SHOW_PATHS:
+        for zombie in zombies:
+            if hasattr(zombie, 'path') and zombie.path:
+                # Draw path lines
+                if len(zombie.path) > 1:
+                    points = [pygame.math.Vector2(point) for point in zombie.path]
+                    pygame.draw.lines(debug_surface, (0, 255, 0, 200), False, points, 2)
+                
+                # Draw current target
+                if zombie.current_target_index < len(zombie.path):
+                    target = zombie.path[zombie.current_target_index]
+                    pygame.draw.circle(debug_surface, (255, 255, 0, 200), (int(target[0]), int(target[1])), 5)
+                
+                # Draw all waypoints
+                for point in zombie.path:
+                    pygame.draw.circle(debug_surface, (0, 200, 200, 200), (int(point[0]), int(point[1])), 3)
+    
+    # Blit the debug surface onto the screen
+    screen.blit(debug_surface, (0, 0))
+    
+    # Draw debug HUD 
+    debug_text = [
+        f"Debug Mode (F2 to toggle)",
+        f"Grid: {'ON (F3)' if DEBUG_SHOW_GRID else 'OFF (F3)'}",
+        f"Paths: {'ON (F4)' if DEBUG_SHOW_PATHS else 'OFF (F4)'}",
+        f"Obstacles: {'ON (F5)' if DEBUG_SHOW_OBSTACLES else 'OFF (F5)'}",
+        f"Zombies: {len(zombies)}",
+        f"Active Paths: {sum(1 for z in zombies if hasattr(z, 'path') and z.path)}"
+    ]
+    
+    for i, text in enumerate(debug_text):
+        text_surface = font.render(text, True, WHITE)
+        screen.blit(text_surface, (10, HEIGHT - 150 + i * 25))
+
 def main():
-    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, DEBUG_MODE, DEBUG_SHOW_GRID, DEBUG_SHOW_OBSTACLES, DEBUG_SHOW_PATHS
 
     initialize_game() 
 
     running = True
-    while running:
-        screen.fill(BLACK)
+    try:
+        background = pygame.image.load("background.png").convert()
+        background = pygame.transform.scale(background, (WIDTH, HEIGHT)) 
+    except:
+        print("Background image not found! Using fallback color.")
+        background = None
 
+    while running:
+        if background:
+            screen.blit(background, (0, 0))
+        else:
+            screen.fill(BLACK)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+                
+
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F2:  # Toggle debug mode
+                    DEBUG_MODE = not DEBUG_MODE
+                if DEBUG_MODE:  # Only allow these if in debug mode
+                    if event.key == pygame.K_F3:  # Toggle grid
+                        DEBUG_SHOW_GRID = not DEBUG_SHOW_GRID
+                    if event.key == pygame.K_F4:  # Toggle paths
+                        DEBUG_SHOW_PATHS = not DEBUG_SHOW_PATHS
+                    if event.key == pygame.K_F5:  # Toggle obstacles
+                        DEBUG_SHOW_OBSTACLES = not DEBUG_SHOW_OBSTACLES
+
                 keys = pygame.key.get_pressed()
                 if keys[pygame.K_SPACE] and player.can_shoot():
                     
@@ -969,7 +1496,7 @@ def main():
                     )
                     
                     # Create muzzle flash and bullet
-                    gun_length = 40  # Distance from the player's center to the muzzle
+                    gun_length = 20  # Distance from the player's center to the muzzle
                     muzzle_x = player.rect.centerx + gun_length * direction.x
                     muzzle_y = player.rect.centery + gun_length * direction.y
                     
@@ -989,14 +1516,12 @@ def main():
                     # Auto-reload when empty
                     if player.ammo <= 0:
                         player.start_reload()
+                    
                 
                 if keys[pygame.K_r]:
                     player.start_reload()
                 if keys[pygame.K_b]:
                     show_shop()
-
-
-
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left click
@@ -1014,7 +1539,13 @@ def main():
         # Update all game objects
         all_sprites.update()
 
+        pathfinding_grid.update_zombie_positions(zombies)
+
         handle_zombie_collisions()
+
+        handle_stuck_entities()
+
+        contain_zombies()
 
         # Update player health (for invincibility frames)
         player_health.update()
@@ -1029,21 +1560,11 @@ def main():
                     zombie.kill()
         
         # Check spit collisions with player
-        for spit in pygame.sprite.spritecollide(player, spit_projectiles, True):
-            if player_health.take_damage(1):  # 1 heart of damage per spit
-                show_death_screen()
-
-        # Check if player is hit by zombies (pixel-perfect collision)
-        for zombie in zombies:
-            # First check bounding box collision (fast check)
-            if pygame.sprite.collide_rect(player, zombie):
-                # Then check pixel-perfect collision
-                offset_x = zombie.rect.left - player.rect.left
-                offset_y = zombie.rect.top - player.rect.top
-                if player.mask.overlap(zombie.mask, (offset_x, offset_y)):
-                    if player_health.take_damage(1):  # 1 heart of damage per zombie hit
-                        show_death_screen()
-                        running = False
+        if not DEBUG_MODE:
+            for spit in pygame.sprite.spritecollide(player, spit_projectiles, True):
+                if player_health.take_damage(1):  # 1 heart of damage per spit
+                    show_death_screen()
+        
 
         # In the wave progression section (after zombie kill check)
         if len(zombies) == 0 and not wave_ready:
@@ -1091,6 +1612,7 @@ def main():
         player.update_reload()
         player.draw_ammo(screen)
 
+        draw_debug_info(screen)   
 
         pygame.display.flip()
         clock.tick(FPS)
