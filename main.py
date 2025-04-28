@@ -1841,7 +1841,7 @@ def main():
 
     running = True
     try:
-        background = pygame.image.load("background.png").convert()
+        background = pygame.image.load("Images/background.png").convert()
         background = pygame.transform.scale(background, (WIDTH, HEIGHT)) 
     except:
         print("Background image not found! Using fallback color.")
@@ -1872,7 +1872,7 @@ def main():
                 if keys[pygame.K_SPACE] and player.can_shoot():
 
                     gunshot_sound.play()
-                    
+
                     direction = pygame.math.Vector2(
                         math.cos(math.radians(player.angle)),
                         -math.sin(math.radians(player.angle))
