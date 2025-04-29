@@ -658,79 +658,43 @@ class Player(pygame.sprite.Sprite):
     
     def shoot(self):
         if self.can_shoot():
-            direction = pygame.math.Vector2(
-                math.cos(math.radians(self.angle)),
-                -math.sin(math.radians(self.angle))
-            ).normalize()
-
-            gun_length = 20
+            # Get mouse position
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            
+            # Calculate direction vector from player to mouse
+            dx = mouse_x - self.rect.centerx
+            dy = mouse_y - self.rect.centery
+            
+            # Normalize the direction vector
+            distance = max(1, math.sqrt(dx*dx + dy*dy))  
+            direction = pygame.math.Vector2(dx/distance, dy/distance)
+            
+            gun_length = 20  
             muzzle_x = self.rect.centerx + gun_length * direction.x
             muzzle_y = self.rect.centery + gun_length * direction.y
-            muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, self.angle)
+            
+            muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, 0)  
             all_sprites.add(muzzle_flash)
 
-            # Handle weapon-specific shooting
-            if self.weapon.name == "Shotgun":
-                self.shotgun_shot(direction, gun_length)
-            elif self.weapon.name == "Rifle":
-                self.rifle_shot(direction, gun_length)
-            elif self.weapon.name == "Sniper":
-                self.sniper_shot(direction, gun_length)
-            else:
-                self.pistol_shot(direction, gun_length)
+            # Create bullet
+            bullet = Bullet(
+                player.rect.centerx, 
+                player.rect.centery,
+                direction, 
+                player.weapon.projectile_speed,
+                player.weapon.max_range
+            )
+            all_sprites.add(bullet)
+            bullets.add(bullet)
 
             # Update ammo and cooldown
             self.ammo -= 1
             self.last_shot_time = pygame.time.get_ticks()
-
             gunshot_sound.play()
 
             # Auto-reload when empty
             if self.ammo <= 0:
                 self.start_reload()
-
-    def shotgun_shot(self, gun_length): # Does not work, fix later maybe
-            
-            # Pass projectile_speed and max_range from the weapon
-            bullet = Bullet(
-                self.rect.centerx, self.rect.centery, gun_length, 
-                speed=self.weapon.projectile_speed,
-                max_distance=self.weapon.max_range
-            )
-            all_sprites.add(bullet)
-            bullets.add(bullet)
-
-    def sniper_shot(self, direction, gun_length):
-        # Pass projectile_speed and max_range directly
-        bullet = Bullet(
-            self.rect.centerx, self.rect.centery,
-            direction, gun_length, self.angle,
-            self.weapon.projectile_speed,
-            self.weapon.max_range
-        )
-        all_sprites.add(bullet)
-        bullets.add(bullet)
-
-
-    def rifle_shot(self, direction, gun_length):
-        bullet = Bullet(
-            self.rect.centerx, self.rect.centery,
-            direction, gun_length, self.angle,
-            self.weapon.projectile_speed,
-            self.weapon.max_range
-        )
-        all_sprites.add(bullet)
-        bullets.add(bullet)
-
-    def pistol_shot(self, direction, gun_length):
-        bullet = Bullet(
-            self.rect.centerx, self.rect.centery,
-            direction, gun_length, self.angle,
-            self.weapon.projectile_speed,
-            self.weapon.max_range
-        )
-        all_sprites.add(bullet)
-        bullets.add(bullet)
 
 # MuzzleFlasash class
 class MuzzleFlash(pygame.sprite.Sprite):
@@ -815,45 +779,37 @@ class MuzzleFlash(pygame.sprite.Sprite):
 
 # Bullet class
 class Bullet(pygame.sprite.Sprite):
-    def __init__(self, x, y, direction, gun_length, angle, projectile_speed, max_range):
+    def __init__(self, x, y, direction, speed, max_range):
         super().__init__()
-        self.speed = projectile_speed
+        self.speed = speed
         self.max_distance = max_range
-        self.distance_traveled = 0  # Track how far the bullet has traveled
+        self.distance_traveled = 0
         self.width = 15
         self.height = 8
 
-        # Create the original bullet image with a black outline
-        self.original_image = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        pygame.draw.rect(self.original_image, YELLOW, (0, 0, self.width, self.height))  # Yellow bullet
-        pygame.draw.rect(self.original_image, BLACK, (0, 0, self.width, self.height), 2)  # Black outline
-
-        # Rotate the bullet to face the correct direction
-        self.image = pygame.transform.rotate(self.original_image, -angle)
+        # Create bullet image
+        self.image = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        pygame.draw.rect(self.image, YELLOW, (0, 0, self.width, self.height))
+        pygame.draw.rect(self.image, BLACK, (0, 0, self.width, self.height), 2)
+        
         self.rect = self.image.get_rect(center=(x, y))
         self.direction = direction
-        self.rect.centerx = x + gun_length * self.direction.x
-        self.rect.centery = y + gun_length * self.direction.y
 
     def update(self):
-        dx = self.speed * self.direction.x
-        dy = self.speed * self.direction.y
-        self.rect.x += dx
-        self.rect.y += dy
-        self.distance_traveled += math.sqrt(dx**2 + dy**2)  # Update distance traveled
+        # Move bullet in its direction
+        self.rect.x += self.direction.x * self.speed
+        self.rect.y += self.direction.y * self.speed
+        self.distance_traveled += self.speed
 
         for wall in MONUMENT_WALLS:
-            if self.rect.colliderect(wall):
-                self.kill()
-                return
-
-        # Check if the bullet has exceeded its max distance
-        if self.max_distance is not None and self.distance_traveled > self.max_distance:
+                    if self.rect.colliderect(wall):
+                        self.kill()
+                        return
+                    
+        # Check if bullet exceeded max range or left screen
+        if (self.max_distance is not None and self.distance_traveled > self.max_distance) or \
+           not screen.get_rect().colliderect(self.rect):
             self.kill()
-        else:
-            if (self.rect.right < 0 or self.rect.left > WIDTH or
-                self.rect.top > HEIGHT or self.rect.bottom < 0):
-                self.kill()
 
  
 class SpitProjectile(pygame.sprite.Sprite):
@@ -1873,22 +1829,33 @@ def main():
 
                     gunshot_sound.play()
 
-                    direction = pygame.math.Vector2(
-                        math.cos(math.radians(player.angle)),
-                        -math.sin(math.radians(player.angle))
-                    )
-                    
+                    # Get mouse position
+                    mouse_x, mouse_y = pygame.mouse.get_pos()
+
+                    # Calculate direction vector from player to mouse
+                    dx = mouse_x - player.rect.centerx
+                    dy = mouse_y - player.rect.centery
+
+                    # Normalize the direction vector
+                    distance = max(1, math.sqrt(dx*dx + dy*dy))
+                    direction = pygame.math.Vector2(dx/distance, dy/distance)
+
                     # Create muzzle flash and bullet
                     gun_length = 20  # Distance from the player's center to the muzzle
                     muzzle_x = player.rect.centerx + gun_length * direction.x
                     muzzle_y = player.rect.centery + gun_length * direction.y
-                    
-                    muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, player.angle)
+
+                    muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, 0)
                     all_sprites.add(muzzle_flash)
-                    
+
                     # Create the bullet
-                    bullet = Bullet(player.rect.centerx, player.rect.centery, 
-                                    direction, gun_length, player.angle, player.weapon.projectile_speed, player.weapon.max_range)
+                    bullet = Bullet(
+                        player.rect.centerx, 
+                        player.rect.centery,
+                        direction,
+                        player.weapon.projectile_speed,
+                        player.weapon.max_range
+                    )
                     all_sprites.add(bullet)
                     bullets.add(bullet)
                     
