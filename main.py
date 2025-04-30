@@ -91,27 +91,55 @@ is_shop_open = False
 GRID_SIZE = 20
 GRID_WIDTH = WIDTH // GRID_SIZE
 GRID_HEIGHT = HEIGHT // GRID_SIZE
+TEXT_BOBBING_INTERVAL = 300
+TEXT_BOBBING_STEP = 0.5
+TEXT_BOBBING_RANGE = 2
 
 COLLISION_RECTS = [ 
     # Graves
-    pygame.Rect(65, 109, 86, 47),  
-    pygame.Rect(542, 443, 78, 64),
-    pygame.Rect(334, 497, 84, 36),
+    # Left top
+    pygame.Rect(74, 122, 76, 16),
+    pygame.Rect(69, 138, 66, 18),  
+    pygame.Rect(93, 108, 55, 14),
+
+    # 2. Left bot
+    pygame.Rect(217, 502, 80, 26),
+    pygame.Rect(255, 486, 42, 16),
+    pygame.Rect(220, 528, 48, 13),
+
+    # 2. Right top
+    pygame.Rect(304, 166, 77, 22),
+    pygame.Rect(326, 151, 56, 15),
+    pygame.Rect(299, 188, 43, 18),
+
+    # Right top
     pygame.Rect(378, 199, 83, 35),
-    pygame.Rect(217, 489, 81, 50),
+
+    # Left Bot
     pygame.Rect(121, 433, 84, 38),
-    pygame.Rect(202, 84, 82, 56),
-    pygame.Rect(302, 149, 80, 53),
+
+    # 2. Left top
+    pygame.Rect(202, 91, 78, 29),
+    pygame.Rect(231, 120, 57, 21),
+
+    # 2.Right bot
+    pygame.Rect(334, 497, 84, 36),
+
+    # Right bot
+    pygame.Rect(544, 456, 77, 34),
+    pygame.Rect(554, 442, 32, 14),
+    pygame.Rect(574, 490, 43, 16),  
+
     # Monument walls
-    pygame.Rect(880, 459, 278, 33),
-    pygame.Rect(1123, 491, 33, 134),
-    pygame.Rect(879, 623, 278, 34),
+    pygame.Rect(880, 459, 274, 27),
+    pygame.Rect(1123, 491, 27, 134),
+    pygame.Rect(879, 623, 274, 25),
 ]
 
 MONUMENT_WALLS = [ # Used just for bullet collisions
-    pygame.Rect(880, 459, 278, 33),
-    pygame.Rect(1123, 491, 33, 134),
-    pygame.Rect(879, 623, 278, 34)
+    pygame.Rect(880, 459, 274, 27),
+    pygame.Rect(1123, 491, 27, 134),
+    pygame.Rect(879, 623, 274, 25),
 ]
 
 
@@ -597,7 +625,8 @@ class Player(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=self.true_position + offset_rotated)
 
         # Automatic firing for rifle
-        if self.weapon.is_automatic and keys[pygame.K_SPACE]:
+        mouse_buttons = pygame.mouse.get_pressed()
+        if self.weapon.is_automatic and mouse_buttons[0]:  # 0 is left mouse button
             if self.can_shoot():
                 self.shoot()
 
@@ -1177,12 +1206,6 @@ class Farm:
                     head_width = 10
                     head_height = 5
                     pygame.draw.ellipse(screen, head_color, (x - head_width // 2, stem_top - head_height, head_width, head_height))
-
-            # Display "Mature!" text above the farm when fully grown
-            if growth_percentage >= 1.0:
-                text = font.render("Mature!", True, WHITE)
-                text_rect = text.get_rect(center=(self.rect.centerx, self.rect.top - 20))
-                screen.blit(text, text_rect)
         
 def show_start_menu():
     menu = [
@@ -1396,6 +1419,9 @@ class HeartExplosion:
 
 def play_death_animation():
     global background
+
+    for spits in spit_projectiles:
+        spit_projectiles.remove(spits)
 
     background_music.stop()
 
@@ -1791,7 +1817,7 @@ def draw_debug_info(screen):
         screen.blit(text_surface, (10, HEIGHT - 150 + i * 25))
 
 def main():
-    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, DEBUG_MODE, DEBUG_SHOW_GRID, DEBUG_SHOW_OBSTACLES, DEBUG_SHOW_PATHS, background
+    global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, DEBUG_MODE, DEBUG_SHOW_GRID, DEBUG_SHOW_OBSTACLES, DEBUG_SHOW_PATHS, background, TEXT_BOBBING_INTERVAL, TEXT_BOBBING_RANGE, TEXT_BOBBING_STEP
 
     initialize_game() 
 
@@ -1825,61 +1851,27 @@ def main():
                         DEBUG_SHOW_OBSTACLES = not DEBUG_SHOW_OBSTACLES
 
                 keys = pygame.key.get_pressed()
-                if keys[pygame.K_SPACE] and player.can_shoot():
-
-                    gunshot_sound.play()
-
-                    # Get mouse position
-                    mouse_x, mouse_y = pygame.mouse.get_pos()
-
-                    # Calculate direction vector from player to mouse
-                    dx = mouse_x - player.rect.centerx
-                    dy = mouse_y - player.rect.centery
-
-                    # Normalize the direction vector
-                    distance = max(1, math.sqrt(dx*dx + dy*dy))
-                    direction = pygame.math.Vector2(dx/distance, dy/distance)
-
-                    # Create muzzle flash and bullet
-                    gun_length = 20  # Distance from the player's center to the muzzle
-                    muzzle_x = player.rect.centerx + gun_length * direction.x
-                    muzzle_y = player.rect.centery + gun_length * direction.y
-
-                    muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, 0)
-                    all_sprites.add(muzzle_flash)
-
-                    # Create the bullet
-                    bullet = Bullet(
-                        player.rect.centerx, 
-                        player.rect.centery,
-                        direction,
-                        player.weapon.projectile_speed,
-                        player.weapon.max_range
-                    )
-                    all_sprites.add(bullet)
-                    bullets.add(bullet)
-                    
-                    # Update ammo and cooldown
-                    player.ammo -= 1
-                    player.last_shot_time = pygame.time.get_ticks()
-                    
-                    # Auto-reload when empty
-                    if player.ammo <= 0:
-                        player.start_reload()
-                    
-                
                 if keys[pygame.K_r]:
                     player.start_reload()
                 if keys[pygame.K_b]:
                     show_shop()
-
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left click
-                    if farm.rect.collidepoint(event.pos):
+                if event.key == pygame.K_e:
+                    # Check if player is close to farm
+                    player_to_farm_dist = math.sqrt((player.rect.centerx - farm.rect.centerx)**2 + 
+                                                (player.rect.centery - farm.rect.centery)**2)
+                    if player_to_farm_dist < 150:  # Close range check
                         if farm.seed_planted is None:
                             farm.plant_seed()
                         else:
                             farm.harvest_seed()
+
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    if player.can_shoot():
+                        player.shoot()
+
+                        if player.ammo <= 0:
+                            player.start_reload()
 
             # Trigger next wave after a delay
             if event.type == NEXT_WAVE_EVENT:
@@ -1944,6 +1936,39 @@ def main():
                 current_time = pygame.time.get_ticks()
                 if current_time - zombie.stuck_timer > zombie.max_stuck_time:
                     zombie.kill()
+
+        # Draw howering text for farm
+        player_to_farm_dist = math.sqrt((player.rect.centerx - farm.rect.centerx)**2 + (player.rect.centery - farm.rect.centery)**2)
+        if player_to_farm_dist < 150:
+            # Calculate bobbing effect
+            current_time = pygame.time.get_ticks()
+            bobbing_phase = (current_time // TEXT_BOBBING_INTERVAL) % 4
+            
+            # Simple state machine for bobbing direction
+            if not hasattr(farm, 'bob_offset'):
+                farm.bob_offset = 0
+                farm.bob_direction = TEXT_BOBBING_STEP
+            
+            if bobbing_phase == 0:
+                farm.bob_direction = TEXT_BOBBING_STEP
+            elif bobbing_phase == 2:
+                farm.bob_direction = -TEXT_BOBBING_STEP
+            
+            farm.bob_offset += farm.bob_direction
+            farm.bob_offset = max(-TEXT_BOBBING_RANGE, min(TEXT_BOBBING_RANGE, farm.bob_offset))
+            
+            if farm.seed_planted is None:
+                text = font.render("Press E to plant", True, WHITE)
+            else:
+                if (pygame.time.get_ticks() - farm.seed_planted) / 1000 >= 15:
+                    text = font.render("Press E to harvest", True, WHITE)
+                else:
+                    text = font.render("Growing...", True, WHITE)
+            
+            # Apply the offset
+            text_rect = text.get_rect(center=(farm.rect.centerx, farm.rect.top - 20 + farm.bob_offset))
+
+            screen.blit(text, text_rect)
 
         # Draw Zombie HB
         for zombie in zombies:
