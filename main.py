@@ -385,7 +385,7 @@ class Weapon:
 weapons = {
     "Pistol": Weapon("Pistol", 25, 200, 10, 2000, 0, 
                     max_range=500),
-    "Shotgun": Weapon("Shotgun", 100, 500, 6, 3000, 50, 
+    "Shotgun": Weapon("Shotgun", 80, 500, 4, 3000, 50, 
                     spread=30, max_range=200),  
     "Rifle": Weapon("Rifle", 35, 100, 20, 2500, 100, 
                     is_automatic=True, projectile_speed=15, max_range=600),
@@ -437,7 +437,7 @@ def show_shop():
         title_text = shop_font.render("Shop", True, WHITE)
         screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, 30))
 
-        info_text = font.render("Press 1-3 to buy/equip or ESC to exit)", True, WHITE)
+        info_text = font.render("Press 1-3 to buy/equip or ESC to exit", True, WHITE)
         screen.blit(info_text, (WIDTH//2 - info_text.get_width()//2, 670))
         
         # Weapon listings
@@ -500,7 +500,7 @@ def show_shop():
                     handle_weapon_selection("Sniper", weapons["Sniper"])
 
 class BloodParticle(pygame.sprite.Sprite):
-    def __init__(self, x, y, angle=None):
+    def __init__(self, x, y):
         super().__init__()
         self.size = random.randint(3, 7)
         self.image = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
@@ -697,6 +697,7 @@ class Player(pygame.sprite.Sprite):
             # Normalize the direction vector
             distance = max(1, math.sqrt(dx*dx + dy*dy))  
             direction = pygame.math.Vector2(dx/distance, dy/distance)
+            base_direction = pygame.math.Vector2(dx/distance, dy/distance)
             
             gun_length = 20  
             muzzle_x = self.rect.centerx + gun_length * direction.x
@@ -705,16 +706,57 @@ class Player(pygame.sprite.Sprite):
             muzzle_flash = MuzzleFlash(muzzle_x, muzzle_y, 0)  
             all_sprites.add(muzzle_flash)
 
-            # Create bullet
-            bullet = Bullet(
-                player.rect.centerx, 
-                player.rect.centery,
-                direction, 
-                player.weapon.projectile_speed,
-                player.weapon.max_range
-            )
-            all_sprites.add(bullet)
-            bullets.add(bullet)
+            # Create 3 bullets with different directions
+            if self.weapon.name == "Shotgun":
+                # Center bullet
+                center_bullet = Bullet(
+                    self.rect.centerx, 
+                    self.rect.centery,
+                    base_direction, 
+                    self.weapon.projectile_speed,
+                    self.weapon.max_range
+                )
+                all_sprites.add(center_bullet)
+                bullets.add(center_bullet)
+                
+                # Left bullet
+                left_direction = pygame.math.Vector2(-base_direction.y, base_direction.x) * 0.3 + base_direction
+                left_direction = left_direction.normalize()
+                
+                left_bullet = Bullet(
+                    self.rect.centerx, 
+                    self.rect.centery,
+                    left_direction, 
+                    self.weapon.projectile_speed,
+                    self.weapon.max_range
+                )
+                all_sprites.add(left_bullet)
+                bullets.add(left_bullet)
+                
+                # Right bullet
+                right_direction = pygame.math.Vector2(base_direction.y, -base_direction.x) * 0.3 + base_direction
+                right_direction = right_direction.normalize()
+                
+                right_bullet = Bullet(
+                    self.rect.centerx, 
+                    self.rect.centery,
+                    right_direction, 
+                    self.weapon.projectile_speed,
+                    self.weapon.max_range
+                )
+                all_sprites.add(right_bullet)
+                bullets.add(right_bullet)
+            else:
+                # Regular single bullet for other weapons
+                bullet = Bullet(
+                    self.rect.centerx, 
+                    self.rect.centery,
+                    base_direction, 
+                    self.weapon.projectile_speed,
+                    self.weapon.max_range
+                )
+                all_sprites.add(bullet)
+                bullets.add(bullet)
 
             # Update ammo and cooldown
             self.ammo -= 1
@@ -1477,56 +1519,6 @@ def play_death_animation():
 
     show_death_screen()
 
-def handle_zombie_collisions():
-    # Spatial partitioning for better performance
-    spatial_grid = {}
-    cell_size = 100 
-    
-    # Assign zombies to grid cells
-    for zombie in zombies:
-        cell_x = zombie.rect.centerx // cell_size
-        cell_y = zombie.rect.centery // cell_size
-        cell_key = (cell_x, cell_y)
-        
-        if cell_key not in spatial_grid:
-            spatial_grid[cell_key] = []
-        spatial_grid[cell_key].append(zombie)
-    
-    # Check collisions within each cell and neighboring cells
-    for cell_key, cell_zombies in spatial_grid.items():
-        cell_x, cell_y = cell_key
-        
-        # Check all 9 neighboring cells (including current)
-        for dx in [-1, 0, 1]:
-            for dy in [-1, 0, 1]:
-                neighbor_key = (cell_x + dx, cell_y + dy)
-                
-                if neighbor_key in spatial_grid:
-                    # Check collisions between zombies in current cell and neighbor cell
-                    for zombie1 in cell_zombies:
-                        for zombie2 in spatial_grid[neighbor_key]:
-                            if zombie1 != zombie2 and id(zombie1) < id(zombie2):  # Avoid duplicate checks
-                                # Use circle-circle collision for quick check
-                                dist_vec = pygame.math.Vector2(zombie2.rect.center) - pygame.math.Vector2(zombie1.rect.center)
-                                distance = dist_vec.length()
-                                min_dist = zombie1.collision_radius + zombie2.collision_radius
-                                
-                                if distance < min_dist:
-                                    # Calculate overlap
-                                    overlap = min_dist - distance
-                                    
-                                    if overlap > 0:
-                                        # Calculate push direction
-                                        if distance > 0:
-                                            push_dir = dist_vec.normalize()
-                                        else:
-                                            push_dir = pygame.math.Vector2(1, 0)  # Default direction if same position
-                                        
-                                        # Push both zombies apart
-                                        push_amount = overlap * 0.5
-                                        zombie1.rect.center += -push_dir * push_amount
-                                        zombie2.rect.center += push_dir * push_amount
-
 # Sprite groups
 all_sprites = pygame.sprite.Group()
 player = Player()
@@ -1882,8 +1874,6 @@ def main():
         all_sprites.update()
 
         pathfinding_grid.update_zombie_positions(zombies)
-
-        handle_zombie_collisions()
 
         handle_stuck_entities()
 
