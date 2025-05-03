@@ -15,7 +15,6 @@ F5 = Obstacles
 
 """
 
-
 # Initialize pygame
 pygame.init()
 
@@ -94,6 +93,7 @@ GRID_HEIGHT = HEIGHT // GRID_SIZE
 TEXT_BOBBING_INTERVAL = 300
 TEXT_BOBBING_STEP = 0.5
 TEXT_BOBBING_RANGE = 2
+NEXT_WAVE_EVENT = pygame.USEREVENT + 2
 
 COLLISION_RECTS = [ 
     # Graves
@@ -141,7 +141,6 @@ MONUMENT_WALLS = [ # Used just for bullet collisions
     pygame.Rect(1123, 491, 27, 134),
     pygame.Rect(879, 623, 274, 25),
 ]
-
 
 class PathfindingGrid:
     def __init__(self):
@@ -214,9 +213,8 @@ class PathfindingGrid:
                     path.append(current)
                     current = came_from[current]
                 path.reverse()
-                # Smooth the path
-                return self.smooth_path([(x * GRID_SIZE + GRID_SIZE//2, y * GRID_SIZE + GRID_SIZE//2) 
-                                       for (x, y) in path])
+                return [(x * GRID_SIZE + GRID_SIZE//2, y * GRID_SIZE + GRID_SIZE//2) 
+                       for (x, y) in path]
                 
             for dx, dy in [(0,1), (1,0), (0,-1), (-1,0), (1,1), (1,-1), (-1,1), (-1,-1)]:
                 neighbor = (current[0] + dx, current[1] + dy)
@@ -235,25 +233,6 @@ class PathfindingGrid:
                         open_set_hash.add(neighbor)
         
         return []  # No path found
-
-    def smooth_path(self, path):
-        # Simplify path by removing unnecessary waypoints
-        if len(path) < 3:
-            return path
-            
-        smoothed = [path[0]]
-        for i in range(1, len(path)-1):
-            prev = smoothed[-1]
-            next_p = path[i+1]
-            
-            # If the angle change is small, skip this point
-            angle1 = math.atan2(path[i][1]-prev[1], path[i][0]-prev[0])
-            angle2 = math.atan2(next_p[1]-path[i][1], next_p[0]-path[i][0])
-            if abs(angle1 - angle2) > math.pi/8:  # ~22.5 degree threshold
-                smoothed.append(path[i])
-                
-        smoothed.append(path[-1])
-        return smoothed
 
     def heuristic(self, a, b):
         # Euclidean distance
@@ -281,7 +260,7 @@ class PathfindingGrid:
                     
         return (x, y)  # Fallback
 
-# Player health system with 3 hearts and invincibility frames
+# Player health class system with 3 hearts and invincibility frames
 class PlayerHealth:
     def __init__(self):
         self.max_hearts = 3
@@ -697,7 +676,6 @@ class Player(pygame.sprite.Sprite):
             # Normalize the direction vector
             distance = max(1, math.sqrt(dx*dx + dy*dy))  
             direction = pygame.math.Vector2(dx/distance, dy/distance)
-            base_direction = pygame.math.Vector2(dx/distance, dy/distance)
             
             gun_length = 20  
             muzzle_x = self.rect.centerx + gun_length * direction.x
@@ -712,7 +690,7 @@ class Player(pygame.sprite.Sprite):
                 center_bullet = Bullet(
                     self.rect.centerx, 
                     self.rect.centery,
-                    base_direction, 
+                    direction, 
                     self.weapon.projectile_speed,
                     self.weapon.max_range
                 )
@@ -720,7 +698,7 @@ class Player(pygame.sprite.Sprite):
                 bullets.add(center_bullet)
                 
                 # Left bullet
-                left_direction = pygame.math.Vector2(-base_direction.y, base_direction.x) * 0.3 + base_direction
+                left_direction = pygame.math.Vector2(-direction.y, direction.x) * 0.3 + direction
                 left_direction = left_direction.normalize()
                 
                 left_bullet = Bullet(
@@ -734,7 +712,7 @@ class Player(pygame.sprite.Sprite):
                 bullets.add(left_bullet)
                 
                 # Right bullet
-                right_direction = pygame.math.Vector2(base_direction.y, -base_direction.x) * 0.3 + base_direction
+                right_direction = pygame.math.Vector2(direction.y, -direction.x) * 0.3 + direction
                 right_direction = right_direction.normalize()
                 
                 right_bullet = Bullet(
@@ -751,7 +729,7 @@ class Player(pygame.sprite.Sprite):
                 bullet = Bullet(
                     self.rect.centerx, 
                     self.rect.centery,
-                    base_direction, 
+                    direction, 
                     self.weapon.projectile_speed,
                     self.weapon.max_range
                 )
@@ -882,7 +860,6 @@ class Bullet(pygame.sprite.Sprite):
            not screen.get_rect().colliderect(self.rect):
             self.kill()
 
- 
 class SpitProjectile(pygame.sprite.Sprite):
     def __init__(self, x, y, direction):
         super().__init__()
@@ -916,7 +893,6 @@ class Zombie(pygame.sprite.Sprite):
         self.path_update_interval = random.randint(300, 500)  
         self.current_target_index = 0
         self.path = []
-        self.smoothing_factor = 0.2 
         self.next_waypoint = None
         self.path_update_timer = pygame.time.get_ticks()
         self.last_path_update_time = pygame.time.get_ticks()
@@ -1115,7 +1091,6 @@ class Zombie(pygame.sprite.Sprite):
             
             self.path = pathfinding_grid.find_path(adjusted_start, adjusted_target)
             self.current_target_index = 0
-
 
 class TankZombie(Zombie):
     def __init__(self, x, y, image_path):
@@ -1526,11 +1501,7 @@ all_sprites.add(player)
 spit_projectiles = pygame.sprite.Group()
 bullets = pygame.sprite.Group()
 zombies = pygame.sprite.Group()
-
 farm = Farm()
-
-# Define a new event for wave progression
-NEXT_WAVE_EVENT = pygame.USEREVENT + 2
 
 def spawn_zombie():
     global zombie_wave
@@ -1660,7 +1631,6 @@ def contain_zombies():
             
             zombie.path_update_timer = 0  # Will cause path to update next frame
         
-
 def initialize_game():
     global zombie_wave, wave_ready, zombie_health, player_money, all_sprites, zombies, bullets, spit_projectiles, player, player_health, farm, wave_start_time, showing_wave_warning, warning_start_time, pathfinding_grid
     
